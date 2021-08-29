@@ -1,4 +1,4 @@
-use crate::{Byte, Memory, Word};
+use crate::{Byte, Lcd, Memory, Uart, Word};
 
 const SPR_COUNT: usize = 5;
 const SPR_PROGRAM_COUNTER: usize = 0;
@@ -72,6 +72,14 @@ enum StackTarget {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IORegister {
+    LcdCmd,
+    LcdData,
+    UartData,
+    UartCtrl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Instruction {
     Nop,
     Mov(LoadSource, StoreTarget),
@@ -114,6 +122,8 @@ enum Instruction {
     Pop(StackTarget),
     Call(JumpTarget),
     Ret,
+    Out(AluSource, IORegister),
+    In(IORegister, AluSource),
 }
 
 pub struct Cpu {
@@ -145,7 +155,6 @@ impl Cpu {
         Self {
             transfer: Word::ZERO,
             spr: [Word::ZERO; SPR_COUNT],
-
             constant: Byte::ZERO,
             gpr: [Byte::ZERO; GPR_COUNT],
 
@@ -322,7 +331,7 @@ impl Cpu {
         self.spr[SPR_RETURN_ADDRESS] = tmp;
     }
 
-    pub fn clock(&mut self, memory: &mut Memory) {
+    pub fn clock(&mut self, memory: &mut Memory, lcd: &mut Lcd, uart: &mut Uart) {
         // Move instruction stream forward
         self.stage2_instruction = self.stage1_instruction;
         self.stage1_instruction = self.stage0_instruction;
@@ -445,6 +454,30 @@ impl Cpu {
             }
             Instruction::Call(_) => self.flip_pc_ra(),
             Instruction::Ret => self.flip_pc_ra(),
+            Instruction::Out(source, target) => {
+                let value = match source {
+                    AluSource::Gpr(index) => self.gpr[index],
+                };
+
+                match target {
+                    IORegister::LcdCmd => lcd.write_cmd(value.into()),
+                    IORegister::LcdData => lcd.write_data(value.into()),
+                    IORegister::UartData => uart.write_data(value.into()),
+                    IORegister::UartCtrl => unreachable!(), // Register is not writable, sanity check
+                }
+            }
+            Instruction::In(source, target) => {
+                let value = match source {
+                    IORegister::LcdCmd => unreachable!(), // Register is not readable, sanity check
+                    IORegister::LcdData => lcd.read_data(),
+                    IORegister::UartData => uart.read_data(),
+                    IORegister::UartCtrl => uart.read_ctrl(),
+                };
+
+                match target {
+                    AluSource::Gpr(index) => self.gpr[index] = value.into(),
+                }
+            }
             _ => {}
         }
 
@@ -757,6 +790,14 @@ fn decode_opcode(opcode: u8) -> Instruction {
         0x34 => Instruction::Inc(CountTarget::Spr(SPR_STACK_POINTER)), // inc sp
         0x35 => Instruction::Inc(CountTarget::Spr(SPR_SOURCE_INDEX)),  // inc si
         0x36 => Instruction::Inc(CountTarget::Spr(SPR_DESTINATION_INDEX)), // inc di
+
+        // IO
+        0x37 => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::LcdCmd), // out lcdCmd,a
+        0x38 => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::LcdData), // out lcdData,a
+
+        0x39 => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::UartData), // out uartData,a
+        0x3A => Instruction::In(IORegister::UartData, AluSource::Gpr(GPR_A)),  // in a,uartData
+        0x3B => Instruction::In(IORegister::UartCtrl, AluSource::Gpr(GPR_A)),  // in a,uartCtrl
 
         // memory
         0x40 => Instruction::Mov(
