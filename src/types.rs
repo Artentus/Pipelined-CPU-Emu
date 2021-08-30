@@ -1,3 +1,4 @@
+use std::fmt::{Binary, Debug, Display, LowerHex, Octal, UpperHex};
 use std::num::Wrapping;
 use std::ops::{
     Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
@@ -6,7 +7,7 @@ use std::ops::{
 
 macro_rules! def_hardware_type {
     ($type_name:ident, $base_type:ty) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $type_name(Wrapping<$base_type>);
 
         #[allow(dead_code)]
@@ -330,6 +331,43 @@ macro_rules! def_hardware_type {
             #[inline]
             fn into(self) -> $base_type {
                 self.0 .0
+            }
+        }
+
+        impl Display for $type_name {
+            #[inline]
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                Display::fmt(&self.0 .0, f)
+            }
+        }
+        impl Debug for $type_name {
+            #[inline]
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                Debug::fmt(&self.0 .0, f)
+            }
+        }
+        impl UpperHex for $type_name {
+            #[inline]
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                UpperHex::fmt(&self.0 .0, f)
+            }
+        }
+        impl LowerHex for $type_name {
+            #[inline]
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                LowerHex::fmt(&self.0 .0, f)
+            }
+        }
+        impl Binary for $type_name {
+            #[inline]
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                Binary::fmt(&self.0 .0, f)
+            }
+        }
+        impl Octal for $type_name {
+            #[inline]
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                Octal::fmt(&self.0 .0, f)
             }
         }
     };

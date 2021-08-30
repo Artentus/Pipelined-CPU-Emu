@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Display};
+
 use crate::{Byte, Lcd, Memory, Uart, Word};
 
 const SPR_COUNT: usize = 5;
@@ -16,6 +18,27 @@ const GPR_D: usize = 3;
 const PROGRAM_COUNTER_INIT: Word = Word::new(0x0000);
 const STACK_POINTER_INIT: Word = Word::new(0x0000);
 
+fn display_spr(f: &mut std::fmt::Formatter<'_>, index: usize) -> std::fmt::Result {
+    match index {
+        SPR_PROGRAM_COUNTER => write!(f, "pc"),
+        SPR_RETURN_ADDRESS => write!(f, "ra"),
+        SPR_STACK_POINTER => write!(f, "sp"),
+        SPR_SOURCE_INDEX => write!(f, "si"),
+        SPR_DESTINATION_INDEX => write!(f, "di"),
+        _ => unreachable!("Invalid special purpose register index"),
+    }
+}
+
+fn display_gpr(f: &mut std::fmt::Formatter<'_>, index: usize) -> std::fmt::Result {
+    match index {
+        GPR_A => write!(f, "a"),
+        GPR_B => write!(f, "b"),
+        GPR_C => write!(f, "c"),
+        GPR_D => write!(f, "d"),
+        _ => unreachable!("Invalid general purpose register index"),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoadSource {
     Constant,
@@ -24,6 +47,22 @@ enum LoadSource {
     TransferHigh,
     SprIndirect(usize),
     TransferIndirect,
+}
+impl Display for LoadSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadSource::Constant => write!(f, "#"),
+            LoadSource::Gpr(index) => display_gpr(f, *index),
+            LoadSource::TransferLow => write!(f, "tl"),
+            LoadSource::TransferHigh => write!(f, "th"),
+            LoadSource::SprIndirect(index) => {
+                write!(f, "[")?;
+                display_spr(f, *index)?;
+                write!(f, "]")
+            }
+            LoadSource::TransferIndirect => write!(f, "[tx]"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,11 +73,34 @@ enum StoreTarget {
     SprIndirect(usize),
     TransferIndirect,
 }
+impl Display for StoreTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoreTarget::Gpr(index) => display_gpr(f, *index),
+            StoreTarget::TransferLow => write!(f, "tl"),
+            StoreTarget::TransferHigh => write!(f, "th"),
+            StoreTarget::SprIndirect(index) => {
+                write!(f, "[")?;
+                display_spr(f, *index)?;
+                write!(f, "]")
+            }
+            StoreTarget::TransferIndirect => write!(f, "[tx]"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoadWordSource {
     Spr(usize),
     Transfer,
+}
+impl Display for LoadWordSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadWordSource::Spr(index) => display_spr(f, *index),
+            LoadWordSource::Transfer => write!(f, "tx"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,11 +108,27 @@ enum StoreWordTarget {
     Spr(usize),
     Transfer,
 }
+impl Display for StoreWordTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoreWordTarget::Spr(index) => display_spr(f, *index),
+            StoreWordTarget::Transfer => write!(f, "tx"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CountTarget {
     Gpr(usize),
     Spr(usize),
+}
+impl Display for CountTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CountTarget::Gpr(index) => display_gpr(f, *index),
+            CountTarget::Spr(index) => display_spr(f, *index),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,10 +136,25 @@ enum JumpTarget {
     Transfer,
     Spr(usize),
 }
+impl Display for JumpTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JumpTarget::Transfer => write!(f, "tx"),
+            JumpTarget::Spr(index) => display_spr(f, *index),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AluSource {
     Gpr(usize),
+}
+impl Display for AluSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AluSource::Gpr(index) => display_gpr(f, *index),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +163,15 @@ enum StackTarget {
     TransferLow,
     TransferHigh,
 }
+impl Display for StackTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StackTarget::Gpr(index) => display_gpr(f, *index),
+            StackTarget::TransferLow => write!(f, "tl"),
+            StackTarget::TransferHigh => write!(f, "th"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IORegister {
@@ -77,6 +179,16 @@ enum IORegister {
     LcdData,
     UartData,
     UartCtrl,
+}
+impl Display for IORegister {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IORegister::LcdCmd => write!(f, "lcdCmd"),
+            IORegister::LcdData => write!(f, "lcdData"),
+            IORegister::UartData => write!(f, "uartData"),
+            IORegister::UartCtrl => write!(f, "uartCtrl"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +236,55 @@ enum Instruction {
     Ret,
     Out(AluSource, IORegister),
     In(IORegister, AluSource),
+}
+impl Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Instruction::Nop => write!(f, "NOP"),
+            Instruction::Mov(source, target) => write!(f, "MOV {},{}", target, source),
+            Instruction::MovWord(source, target) => write!(f, "MOV {},{}", target, source),
+            Instruction::Inc(target) => write!(f, "INC {}", target),
+            Instruction::Dec(target) => write!(f, "DEC {}", target),
+            Instruction::Prebranch => write!(f, "PREBRANCH"),
+            Instruction::Jmp(target) => write!(f, "JMP {}", target),
+            Instruction::Jo(target) => write!(f, "JO {}", target),
+            Instruction::Jno(target) => write!(f, "JNO {}", target),
+            Instruction::Js(target) => write!(f, "JS {}", target),
+            Instruction::Jns(target) => write!(f, "JNS {}", target),
+            Instruction::Jz(target) => write!(f, "JZ {}", target),
+            Instruction::Jnz(target) => write!(f, "JNZ {}", target),
+            Instruction::Jc(target) => write!(f, "JC {}", target),
+            Instruction::Jnc(target) => write!(f, "JNC {}", target),
+            Instruction::Jna(target) => write!(f, "JNA {}", target),
+            Instruction::Ja(target) => write!(f, "JA {}", target),
+            Instruction::Jl(target) => write!(f, "JL {}", target),
+            Instruction::Jge(target) => write!(f, "JGE {}", target),
+            Instruction::Jle(target) => write!(f, "JLE {}", target),
+            Instruction::Jg(target) => write!(f, "JG {}", target),
+            Instruction::Jlc(target) => write!(f, "JLC {}", target),
+            Instruction::Jnlc(target) => write!(f, "JNLC {}", target),
+            Instruction::Clc => write!(f, "CLC"),
+            Instruction::Shl(target) => write!(f, "SHL {}", target),
+            Instruction::Shr(target) => write!(f, "SHR {}", target),
+            Instruction::Add(source, target) => write!(f, "ADD {},{}", target, source),
+            Instruction::Addc(source, target) => write!(f, "ADDC {},{}", target, source),
+            Instruction::Incc(target) => write!(f, "INCC {}", target),
+            Instruction::Sub(source, target) => write!(f, "SUB {},{}", target, source),
+            Instruction::Subb(source, target) => write!(f, "SUBB {},{}", target, source),
+            Instruction::And(source, target) => write!(f, "AND {},{}", target, source),
+            Instruction::Or(source, target) => write!(f, "OR {},{}", target, source),
+            Instruction::Xor(source, target) => write!(f, "XOR {},{}", target, source),
+            Instruction::Not(target) => write!(f, "NOT {}", target),
+            Instruction::Cmp(source, target) => write!(f, "CMP {},{}", target, source),
+            Instruction::Test(source) => write!(f, "TEST {}", source),
+            Instruction::Push(source) => write!(f, "PUSH {}", source),
+            Instruction::Pop(target) => write!(f, "POP {}", target),
+            Instruction::Call(target) => write!(f, "CALL {}", target),
+            Instruction::Ret => write!(f, "RET"),
+            Instruction::Out(source, target) => write!(f, "OUT {},{}", target, source),
+            Instruction::In(source, target) => write!(f, "IN {},{}", target, source),
+        }
+    }
 }
 
 pub struct Cpu {
@@ -637,9 +798,9 @@ impl Cpu {
                     AluSource::Gpr(index) => self.gpr[index],
                 };
             }
-            Instruction::Cmp(source1, source2) => {
+            Instruction::Cmp(source, target) => {
                 // Same as SUB
-                self.arithmetic_op_stage1(source1, source2, true);
+                self.arithmetic_op_stage1(source, target, true);
             }
             Instruction::Test(source) => {
                 // Same as AND with itself
@@ -681,6 +842,29 @@ impl Cpu {
         if fetch_stage2 {
             self.spr[SPR_PROGRAM_COUNTER] += 1;
         }
+    }
+}
+impl Display for Cpu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "PC: 0x{:0>4X}", self.spr[SPR_PROGRAM_COUNTER])?;
+        writeln!(f, "RA: 0x{:0>4X}", self.spr[SPR_RETURN_ADDRESS])?;
+        writeln!(f, "SP: 0x{:0>4X}", self.spr[SPR_STACK_POINTER])?;
+        writeln!(f, "SI: 0x{:0>4X}", self.spr[SPR_SOURCE_INDEX])?;
+        writeln!(f, "DI: 0x{:0>4X}", self.spr[SPR_DESTINATION_INDEX])?;
+        writeln!(f, "TX: 0x{:0>4X}", self.transfer)?;
+        writeln!(f)?;
+        writeln!(f, "A:  0x{:0>2X}", self.gpr[GPR_A])?;
+        writeln!(f, "B:  0x{:0>2X}", self.gpr[GPR_B])?;
+        writeln!(f, "C:  0x{:0>2X}", self.gpr[GPR_C])?;
+        writeln!(f, "D:  0x{:0>2X}", self.gpr[GPR_D])?;
+        writeln!(f, "TL: 0x{:0>2X}", self.transfer.low())?;
+        writeln!(f, "TH: 0x{:0>2X}", self.transfer.high())?;
+        writeln!(f)?;
+        writeln!(f, "Stage 0: {}", self.stage0_instruction)?;
+        writeln!(f, "Stage 1: {}", self.stage1_instruction)?;
+        writeln!(f, "Stage 2: {}", self.stage2_instruction)?;
+
+        Ok(())
     }
 }
 

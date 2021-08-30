@@ -8,5 +8,6 @@ edition = "2018"
 [dependencies]
 gfx = "0.18"
 gfx_device_gl = "0.16"
-ggez = "0.5"
+ggez = "0.6"
 spin_sleep = "1.0.0"
+crossterm = "0.21.0"
