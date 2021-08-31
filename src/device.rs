@@ -119,3 +119,19 @@ impl Uart {
         assert!(!full, "Cannot receive any more data, buffer is full");
     }
 }
+
+pub struct Audio {}
+impl Audio {
+    #[inline]
+    pub const fn new() -> Self {
+        Self {}
+    }
+
+    pub fn read_data(&mut self) -> u8 {
+        todo!();
+    }
+
+    pub fn write_data(&mut self, value: u8) {
+        todo!();
+    }
+}

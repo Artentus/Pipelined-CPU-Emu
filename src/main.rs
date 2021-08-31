@@ -6,7 +6,7 @@ mod device;
 mod types;
 
 use cpu::Cpu;
-use device::{Lcd, Uart};
+use device::{Audio, Lcd, Uart};
 use types::*;
 
 use std::collections::VecDeque;
@@ -23,7 +23,7 @@ use ggez::graphics::{
 use ggez::{event, graphics, timer, Context, ContextBuilder, GameError, GameResult};
 use spin_sleep::LoopHelper;
 
-const TITLE: &str = "rEmu";
+const TITLE: &str = "Pipelined CPU Emu";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
 
@@ -78,6 +78,7 @@ struct EmuState {
     memory: Box<Memory>,
     lcd: Lcd,
     uart: Uart,
+    audio: Audio,
 
     running: bool,
     fractional_cycles: f64,
@@ -99,6 +100,7 @@ impl EmuState {
             memory: Memory::create(),
             lcd: Lcd::new(),
             uart: Uart::new(),
+            audio: Audio::new(),
 
             running: false,
             fractional_cycles: 0.0,
@@ -147,9 +149,13 @@ impl EmuState {
         Ok(())
     }
 
-    fn clock(&mut self) -> GameResult {
-        self.cpu
-            .clock(self.memory.as_mut(), &mut self.lcd, &mut self.uart);
+    fn clock(&mut self) -> GameResult<bool> {
+        let break_point = self.cpu.clock(
+            self.memory.as_mut(),
+            &mut self.lcd,
+            &mut self.uart,
+            &mut self.audio,
+        );
 
         self.baud_cycles += 1.0;
         while self.baud_cycles >= CYCLES_PER_BAUD {
@@ -158,14 +164,14 @@ impl EmuState {
             self.process_uart()?;
         }
 
-        Ok(())
+        Ok(break_point)
     }
 
-    fn single_clock(&mut self) -> GameResult {
-        self.clock()?;
+    fn single_clock(&mut self) -> GameResult<bool> {
+        let break_point = self.clock()?;
         self.stdout.flush()?;
 
-        Ok(())
+        Ok(break_point)
     }
 }
 impl EventHandler<GameError> for EmuState {
@@ -201,7 +207,10 @@ impl EventHandler<GameError> for EmuState {
                 let cycle_count = WHOLE_CYCLES_PER_FRAME + cycles_to_add;
 
                 for _ in 0..cycle_count {
-                    self.clock()?;
+                    if self.clock()? {
+                        self.running = false;
+                        break;
+                    }
                 }
             }
         }
@@ -269,10 +278,6 @@ impl EventHandler<GameError> for EmuState {
             }
             _ => {}
         }
-    }
-
-    fn key_up_event(&mut self, _ctx: &mut Context, keycode: KeyCode, _keymods: KeyMods) {
-        // ToDo
     }
 }
 

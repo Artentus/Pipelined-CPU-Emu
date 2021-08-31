@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use crate::{Byte, Lcd, Memory, Uart, Word};
+use crate::{Audio, Byte, Lcd, Memory, Uart, Word};
 
 const SPR_COUNT: usize = 5;
 const SPR_PROGRAM_COUNTER: usize = 0;
@@ -119,13 +119,11 @@ impl Display for StoreWordTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CountTarget {
-    Gpr(usize),
     Spr(usize),
 }
 impl Display for CountTarget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CountTarget::Gpr(index) => display_gpr(f, *index),
             CountTarget::Spr(index) => display_spr(f, *index),
         }
     }
@@ -179,6 +177,7 @@ enum IORegister {
     LcdData,
     UartData,
     UartCtrl,
+    AudioData,
 }
 impl Display for IORegister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -187,6 +186,7 @@ impl Display for IORegister {
             IORegister::LcdData => write!(f, "lcdData"),
             IORegister::UartData => write!(f, "uartData"),
             IORegister::UartCtrl => write!(f, "uartCtrl"),
+            IORegister::AudioData => write!(f, "audioData"),
         }
     }
 }
@@ -196,8 +196,8 @@ enum Instruction {
     Nop,
     Mov(LoadSource, StoreTarget),
     MovWord(LoadWordSource, StoreWordTarget),
-    Inc(CountTarget),
-    Dec(CountTarget),
+    IncWord(CountTarget),
+    DecWord(CountTarget),
     Prebranch,
     Jmp(JumpTarget),
     Jo(JumpTarget),   // Overflow
@@ -221,9 +221,11 @@ enum Instruction {
     Shr(AluSource),
     Add(AluSource, AluSource),
     Addc(AluSource, AluSource),
+    Inc(AluSource),
     Incc(AluSource),
     Sub(AluSource, AluSource),
     Subb(AluSource, AluSource),
+    Dec(AluSource),
     And(AluSource, AluSource),
     Or(AluSource, AluSource),
     Xor(AluSource, AluSource),
@@ -236,6 +238,11 @@ enum Instruction {
     Ret,
     Out(AluSource, IORegister),
     In(IORegister, AluSource),
+    Break,
+    Lodsb, // a=[si++]
+    Stosb, // [di++]=a
+    Addac,
+    Subae,
 }
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -243,8 +250,8 @@ impl Display for Instruction {
             Instruction::Nop => write!(f, "NOP"),
             Instruction::Mov(source, target) => write!(f, "MOV {},{}", target, source),
             Instruction::MovWord(source, target) => write!(f, "MOV {},{}", target, source),
-            Instruction::Inc(target) => write!(f, "INC {}", target),
-            Instruction::Dec(target) => write!(f, "DEC {}", target),
+            Instruction::IncWord(target) => write!(f, "INC {}", target),
+            Instruction::DecWord(target) => write!(f, "DEC {}", target),
             Instruction::Prebranch => write!(f, "PREBRANCH"),
             Instruction::Jmp(target) => write!(f, "JMP {}", target),
             Instruction::Jo(target) => write!(f, "JO {}", target),
@@ -268,9 +275,11 @@ impl Display for Instruction {
             Instruction::Shr(target) => write!(f, "SHR {}", target),
             Instruction::Add(source, target) => write!(f, "ADD {},{}", target, source),
             Instruction::Addc(source, target) => write!(f, "ADDC {},{}", target, source),
+            Instruction::Inc(target) => write!(f, "INC {}", target),
             Instruction::Incc(target) => write!(f, "INCC {}", target),
             Instruction::Sub(source, target) => write!(f, "SUB {},{}", target, source),
             Instruction::Subb(source, target) => write!(f, "SUBB {},{}", target, source),
+            Instruction::Dec(target) => write!(f, "DEC {}", target),
             Instruction::And(source, target) => write!(f, "AND {},{}", target, source),
             Instruction::Or(source, target) => write!(f, "OR {},{}", target, source),
             Instruction::Xor(source, target) => write!(f, "XOR {},{}", target, source),
@@ -283,6 +292,11 @@ impl Display for Instruction {
             Instruction::Ret => write!(f, "RET"),
             Instruction::Out(source, target) => write!(f, "OUT {},{}", target, source),
             Instruction::In(source, target) => write!(f, "IN {},{}", target, source),
+            Instruction::Break => write!(f, "BREAK"),
+            Instruction::Lodsb => write!(f, "LODSB"),
+            Instruction::Stosb => write!(f, "STOSB"),
+            Instruction::Addac => write!(f, "ADDAC c,a"),
+            Instruction::Subae => write!(f, "SUBAE d,c"),
         }
     }
 }
@@ -492,11 +506,19 @@ impl Cpu {
         self.spr[SPR_RETURN_ADDRESS] = tmp;
     }
 
-    pub fn clock(&mut self, memory: &mut Memory, lcd: &mut Lcd, uart: &mut Uart) {
+    // Returns true if a break instruction was reached
+    pub fn clock(
+        &mut self,
+        memory: &mut Memory,
+        lcd: &mut Lcd,
+        uart: &mut Uart,
+        audio: &mut Audio,
+    ) -> bool {
         // Move instruction stream forward
         self.stage2_instruction = self.stage1_instruction;
         self.stage1_instruction = self.stage0_instruction;
 
+        let mut break_point = false;
         let mut fetch_stage1 = true; // Wether we can fetch this cycle based on pipeline stage 1
         let mut fetch_stage2 = true; // Wether we can fetch and increment the PC this cycle based on pipeline stage 2
 
@@ -525,6 +547,9 @@ impl Cpu {
                     unreachable!("Opcode performed memory read and write at the same time");
                 }
             }
+            Instruction::IncWord(target) => match target {
+                CountTarget::Spr(index) => self.spr[index] += 1,
+            },
             Instruction::Prebranch => {
                 // This is a dummy instruction emitted by the assembler to stop
                 // PC increments while jump instructions are being executed.
@@ -550,10 +575,7 @@ impl Cpu {
                 self.alu_stage2(Some(target), None);
             }
             Instruction::Inc(target) => match target {
-                CountTarget::Gpr(index) => self.alu_stage2(Some(AluSource::Gpr(index)), Some(1)),
-                CountTarget::Spr(index) => {
-                    self.spr[index] += 1;
-                }
+                AluSource::Gpr(index) => self.alu_stage2(Some(AluSource::Gpr(index)), Some(1)),
             },
             Instruction::Incc(target) => {
                 self.alu_stage2(Some(target), None);
@@ -565,8 +587,7 @@ impl Cpu {
                 self.alu_stage2(Some(target), None);
             }
             Instruction::Dec(target) => match target {
-                CountTarget::Gpr(index) => self.alu_stage2(Some(AluSource::Gpr(index)), Some(0)),
-                CountTarget::Spr(_) => {} // Decrementing SPRs takes place in stage 1
+                AluSource::Gpr(index) => self.alu_stage2(Some(AluSource::Gpr(index)), Some(0)),
             },
             Instruction::And(_, target) => {
                 self.alu_stage2(Some(target), Some(0));
@@ -625,6 +646,7 @@ impl Cpu {
                     IORegister::LcdData => lcd.write_data(value.into()),
                     IORegister::UartData => uart.write_data(value.into()),
                     IORegister::UartCtrl => unreachable!(), // Register is not writable, sanity check
+                    IORegister::AudioData => audio.write_data(value.into()),
                 }
             }
             Instruction::In(source, target) => {
@@ -633,10 +655,50 @@ impl Cpu {
                     IORegister::LcdData => lcd.read_data(),
                     IORegister::UartData => uart.read_data(),
                     IORegister::UartCtrl => uart.read_ctrl(),
+                    IORegister::AudioData => audio.read_data(),
                 };
 
                 match target {
                     AluSource::Gpr(index) => self.gpr[index] = value.into(),
+                }
+            }
+            Instruction::Break => break_point = true,
+            Instruction::Lodsb => {
+                let addr = self.spr[SPR_SOURCE_INDEX];
+                let value = memory.read(addr.into());
+                self.gpr[GPR_A] = value.into();
+
+                // This is a memory read cycle so we have to supress fetch and PC increment.
+                fetch_stage2 = false;
+
+                self.spr[SPR_SOURCE_INDEX] += 1
+            }
+            Instruction::Stosb => {
+                let value = self.gpr[GPR_A];
+                let addr = self.spr[SPR_DESTINATION_INDEX];
+                memory.write(addr.into(), value.into());
+
+                // This is a memory write cycle so we have to supress fetch and PC increment.
+                fetch_stage2 = false;
+
+                self.spr[SPR_DESTINATION_INDEX] += 1
+            }
+            Instruction::Addac => {
+                if self.carry {
+                    // Same as ADD c,a
+                    self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
+                } else {
+                    // Same as AND c,c
+                    self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
+                }
+            }
+            Instruction::Subae => {
+                if self.carry {
+                    // Same as SUB d,c
+                    self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(1));
+                } else {
+                    // Same as AND d,d
+                    self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(0));
                 }
             }
             _ => {}
@@ -664,6 +726,9 @@ impl Cpu {
                 let value = self.load_word(source);
                 self.store_word(target, value);
             }
+            Instruction::DecWord(target) => match target {
+                CountTarget::Spr(index) => self.spr[index] -= 1,
+            },
             Instruction::Jmp(target) => {
                 self.jump_to(target);
             }
@@ -756,11 +821,10 @@ impl Cpu {
                 self.arithmetic_op_stage1(source, target, false);
             }
             Instruction::Inc(target) => match target {
-                CountTarget::Gpr(index) => {
+                AluSource::Gpr(index) => {
                     self.rhs_latch = Byte::ZERO;
                     self.lhs_latch = self.gpr[index];
                 }
-                CountTarget::Spr(_) => {} // Incrementing SPRs takes place in stage 2
             },
             Instruction::Incc(target) => {
                 self.rhs_latch = Byte::ZERO;
@@ -775,12 +839,9 @@ impl Cpu {
                 self.arithmetic_op_stage1(source, target, true);
             }
             Instruction::Dec(target) => match target {
-                CountTarget::Gpr(index) => {
+                AluSource::Gpr(index) => {
                     self.rhs_latch = Byte::MAX;
                     self.lhs_latch = self.gpr[index];
-                }
-                CountTarget::Spr(index) => {
-                    self.spr[index] -= 1;
                 }
             },
             Instruction::And(source, target) => {
@@ -818,6 +879,28 @@ impl Cpu {
                 // RA will be swapped with PC in stage 2
                 self.spr[SPR_RETURN_ADDRESS] = addr;
             }
+            Instruction::Addac => {
+                if self.carry {
+                    // Same as ADD c,a
+                    self.arithmetic_op_stage1(AluSource::Gpr(GPR_A), AluSource::Gpr(GPR_C), false);
+                } else {
+                    // Same as AND c,c
+                    self.logic_op_stage1(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_C), |a, b| {
+                        a & b
+                    });
+                }
+            }
+            Instruction::Subae => {
+                if self.carry {
+                    // Same as SUB d,c
+                    self.arithmetic_op_stage1(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_D), true);
+                } else {
+                    // Same as AND d,d
+                    self.logic_op_stage1(AluSource::Gpr(GPR_D), AluSource::Gpr(GPR_D), |a, b| {
+                        a & b
+                    });
+                }
+            }
             _ => {}
         }
 
@@ -842,6 +925,8 @@ impl Cpu {
         if fetch_stage2 {
             self.spr[SPR_PROGRAM_COUNTER] += 1;
         }
+
+        break_point
     }
 }
 impl Display for Cpu {
@@ -859,6 +944,8 @@ impl Display for Cpu {
         writeln!(f, "D:  0x{:0>2X}", self.gpr[GPR_D])?;
         writeln!(f, "TL: 0x{:0>2X}", self.transfer.low())?;
         writeln!(f, "TH: 0x{:0>2X}", self.transfer.high())?;
+        writeln!(f)?;
+        writeln!(f, "Constant: 0x{:0>2X}", self.constant)?;
         writeln!(f)?;
         writeln!(f, "Stage 0: {}", self.stage0_instruction)?;
         writeln!(f, "Stage 1: {}", self.stage1_instruction)?;
@@ -966,22 +1053,28 @@ fn decode_opcode(opcode: u8) -> Instruction {
             StoreWordTarget::Spr(SPR_DESTINATION_INDEX),
         ), // mov di,sp
 
-        0x30 => Instruction::Dec(CountTarget::Spr(SPR_RETURN_ADDRESS)), // dec ra
-        0x31 => Instruction::Dec(CountTarget::Spr(SPR_STACK_POINTER)),  // dec sp
-        0x32 => Instruction::Dec(CountTarget::Spr(SPR_SOURCE_INDEX)),   // dec si
-        0x33 => Instruction::Dec(CountTarget::Spr(SPR_DESTINATION_INDEX)), // dec di
+        0x30 => Instruction::DecWord(CountTarget::Spr(SPR_RETURN_ADDRESS)), // dec ra
+        0x31 => Instruction::DecWord(CountTarget::Spr(SPR_STACK_POINTER)),  // dec sp
+        0x32 => Instruction::DecWord(CountTarget::Spr(SPR_SOURCE_INDEX)),   // dec si
+        0x33 => Instruction::DecWord(CountTarget::Spr(SPR_DESTINATION_INDEX)), // dec di
 
-        0x34 => Instruction::Inc(CountTarget::Spr(SPR_STACK_POINTER)), // inc sp
-        0x35 => Instruction::Inc(CountTarget::Spr(SPR_SOURCE_INDEX)),  // inc si
-        0x36 => Instruction::Inc(CountTarget::Spr(SPR_DESTINATION_INDEX)), // inc di
+        0x34 => Instruction::IncWord(CountTarget::Spr(SPR_STACK_POINTER)), // inc sp
+        0x35 => Instruction::IncWord(CountTarget::Spr(SPR_SOURCE_INDEX)),  // inc si
+        0x36 => Instruction::IncWord(CountTarget::Spr(SPR_DESTINATION_INDEX)), // inc di
 
         // IO
         0x37 => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::LcdCmd), // out lcdCmd,a
         0x38 => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::LcdData), // out lcdData,a
+        0x3E => Instruction::In(IORegister::LcdCmd, AluSource::Gpr(GPR_A)),  // in a,lcdCmd
 
         0x39 => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::UartData), // out uartData,a
         0x3A => Instruction::In(IORegister::UartData, AluSource::Gpr(GPR_A)),  // in a,uartData
         0x3B => Instruction::In(IORegister::UartCtrl, AluSource::Gpr(GPR_A)),  // in a,uartCtrl
+
+        0x3C => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::AudioData), // out audioData,a
+        0x3D => Instruction::In(IORegister::AudioData, AluSource::Gpr(GPR_A)),  // in a,audioData
+
+        0x3F => Instruction::Break, // break
 
         // memory
         0x40 => Instruction::Mov(
@@ -1057,10 +1150,14 @@ fn decode_opcode(opcode: u8) -> Instruction {
             StoreTarget::SprIndirect(SPR_DESTINATION_INDEX),
         ), // mov [di],d
 
-        0x54 => Instruction::Mov(LoadSource::Gpr(GPR_A), StoreTarget::TransferIndirect), // mov [tx]a
-        0x55 => Instruction::Mov(LoadSource::Gpr(GPR_B), StoreTarget::TransferIndirect), // mov [tx]b
-        0x56 => Instruction::Mov(LoadSource::Gpr(GPR_C), StoreTarget::TransferIndirect), // mov [tx]c
-        0x57 => Instruction::Mov(LoadSource::Gpr(GPR_D), StoreTarget::TransferIndirect), // mov [tx]d
+        0x54 => Instruction::Mov(LoadSource::Gpr(GPR_A), StoreTarget::TransferIndirect), // mov [tx],a
+        0x55 => Instruction::Mov(LoadSource::Gpr(GPR_B), StoreTarget::TransferIndirect), // mov [tx],b
+        0x56 => Instruction::Mov(LoadSource::Gpr(GPR_C), StoreTarget::TransferIndirect), // mov [tx],c
+        0x57 => Instruction::Mov(LoadSource::Gpr(GPR_D), StoreTarget::TransferIndirect), // mov [tx],d
+
+        // string ops
+        0x5B => Instruction::Lodsb, // lodsb
+        0x7E => Instruction::Stosb, // stosb
 
         // flow control
         0x5C => Instruction::Call(JumpTarget::Transfer), // call tx
@@ -1145,10 +1242,15 @@ fn decode_opcode(opcode: u8) -> Instruction {
         0x9E => Instruction::Addc(AluSource::Gpr(GPR_B), AluSource::Gpr(GPR_D)), // addc d,b
         0x9F => Instruction::Addc(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_D)), // addc d,c
 
-        0xA0 => Instruction::Inc(CountTarget::Gpr(GPR_A)), // inc a
-        0xA1 => Instruction::Inc(CountTarget::Gpr(GPR_B)), // inc b
-        0xA2 => Instruction::Inc(CountTarget::Gpr(GPR_C)), // inc c
-        0xA3 => Instruction::Inc(CountTarget::Gpr(GPR_D)), // inc d
+        0x59 => Instruction::Add(AluSource::Gpr(GPR_B), AluSource::Gpr(GPR_B)), // add b,b
+        0x58 => Instruction::Addc(AluSource::Gpr(GPR_B), AluSource::Gpr(GPR_B)), // addc b,b
+
+        0x5A => Instruction::Addac, // addac c,a
+
+        0xA0 => Instruction::Inc(AluSource::Gpr(GPR_A)), // inc a
+        0xA1 => Instruction::Inc(AluSource::Gpr(GPR_B)), // inc b
+        0xA2 => Instruction::Inc(AluSource::Gpr(GPR_C)), // inc c
+        0xA3 => Instruction::Inc(AluSource::Gpr(GPR_D)), // inc d
 
         0xA4 => Instruction::Incc(AluSource::Gpr(GPR_A)), // incc a
         0xA5 => Instruction::Incc(AluSource::Gpr(GPR_B)), // incc b
@@ -1168,6 +1270,8 @@ fn decode_opcode(opcode: u8) -> Instruction {
         0xB2 => Instruction::Sub(AluSource::Gpr(GPR_B), AluSource::Gpr(GPR_D)), // sub d,b
         0xB3 => Instruction::Sub(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_D)), // sub d,c
 
+        0x2F => Instruction::Subae, // subae d,c
+
         0xB4 => Instruction::Subb(AluSource::Gpr(GPR_B), AluSource::Gpr(GPR_A)), // subb a,b
         0xB5 => Instruction::Subb(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_A)), // subb a,c
         0xB6 => Instruction::Subb(AluSource::Gpr(GPR_D), AluSource::Gpr(GPR_A)), // subb a,d
@@ -1181,10 +1285,10 @@ fn decode_opcode(opcode: u8) -> Instruction {
         0xBE => Instruction::Subb(AluSource::Gpr(GPR_B), AluSource::Gpr(GPR_D)), // subb d,b
         0xBF => Instruction::Subb(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_D)), // subb d,c
 
-        0xC0 => Instruction::Dec(CountTarget::Gpr(GPR_A)), // dec a
-        0xC1 => Instruction::Dec(CountTarget::Gpr(GPR_B)), // dec b
-        0xC2 => Instruction::Dec(CountTarget::Gpr(GPR_C)), // dec c
-        0xC3 => Instruction::Dec(CountTarget::Gpr(GPR_D)), // dec d
+        0xC0 => Instruction::Dec(AluSource::Gpr(GPR_A)), // dec a
+        0xC1 => Instruction::Dec(AluSource::Gpr(GPR_B)), // dec b
+        0xC2 => Instruction::Dec(AluSource::Gpr(GPR_C)), // dec c
+        0xC3 => Instruction::Dec(AluSource::Gpr(GPR_D)), // dec d
 
         0xC4 => Instruction::And(AluSource::Gpr(GPR_B), AluSource::Gpr(GPR_A)), // and a,b
         0xC5 => Instruction::And(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_A)), // and a,c
@@ -1252,7 +1356,5 @@ fn decode_opcode(opcode: u8) -> Instruction {
         0xFD => Instruction::Test(AluSource::Gpr(GPR_B)), // test b
         0xFE => Instruction::Test(AluSource::Gpr(GPR_C)), // test c
         0xFF => Instruction::Test(AluSource::Gpr(GPR_D)), // test d
-
-        _ => Instruction::Nop, // Any invalid instruction is treated as a NOP
     }
 }
