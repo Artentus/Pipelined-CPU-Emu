@@ -339,6 +339,7 @@ pub struct Cpu {
     // ALU input latches
     lhs_latch: Byte,
     rhs_latch: Byte,
+    subae_carry: u16,
 
     flags: [bool; FLAG_COUNT],
 }
@@ -357,6 +358,7 @@ impl Cpu {
 
             lhs_latch: Byte::ZERO,
             rhs_latch: Byte::ZERO,
+            subae_carry: 0,
 
             flags: [false; FLAG_COUNT],
         }
@@ -714,22 +716,10 @@ impl Cpu {
                 self.spr[SPR_DESTINATION_INDEX] += 1
             }
             Instruction::Addac => {
-                if self.flags[FLAG_CARRY] {
-                    // Same as ADD c,a
-                    new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
-                } else {
-                    // Same as AND c,c
-                    new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
-                }
+                new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
             }
             Instruction::Subae => {
-                if self.flags[FLAG_CARRY] {
-                    // Same as SUB d,c
-                    new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(1));
-                } else {
-                    // Same as AND d,d
-                    new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(0));
-                }
+                new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(self.subae_carry));
             }
             _ => {}
         }
@@ -928,11 +918,13 @@ impl Cpu {
                 if self.flags[FLAG_CARRY] {
                     // Same as SUB d,c
                     self.arithmetic_op_stage1(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_D), true);
+                    self.subae_carry = 1;
                 } else {
                     // Same as AND d,d
                     self.logic_op_stage1(AluSource::Gpr(GPR_D), AluSource::Gpr(GPR_D), |a, b| {
                         a & b
                     });
+                    self.subae_carry = 0;
                 }
             }
             _ => {}
