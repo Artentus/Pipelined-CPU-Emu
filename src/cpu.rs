@@ -15,6 +15,13 @@ const GPR_B: usize = 1;
 const GPR_C: usize = 2;
 const GPR_D: usize = 3;
 
+const FLAG_COUNT: usize = 5;
+const FLAG_OVERFLOW: usize = 0;
+const FLAG_ZERO: usize = 1;
+const FLAG_CARRY: usize = 2;
+const FLAG_LOGICAL_CARRY: usize = 3;
+const FLAG_SIGN: usize = 4;
+
 const PROGRAM_COUNTER_INIT: Word = Word::new(0x0000);
 const STACK_POINTER_INIT: Word = Word::new(0x0000);
 
@@ -301,6 +308,22 @@ impl Display for Instruction {
     }
 }
 
+fn shift_left(value: Byte, carry: u16) -> (Byte, bool) {
+    let val: u8 = value.into();
+    let long_val = val as u16;
+    let long_shifted = (long_val << 1) | carry;
+    let bytes = long_shifted.to_le_bytes();
+    (bytes[0].into(), bytes[1] != 0)
+}
+
+fn shift_right(value: Byte, carry: u16) -> (Byte, bool) {
+    let val: u8 = value.into();
+    let long_val = val as u16;
+    let long_shifted = (long_val << 7) | (carry << 15);
+    let bytes = long_shifted.to_le_bytes();
+    (bytes[1].into(), bytes[0] != 0)
+}
+
 pub struct Cpu {
     // registers
     transfer: Word,
@@ -317,12 +340,7 @@ pub struct Cpu {
     lhs_latch: Byte,
     rhs_latch: Byte,
 
-    // status flags
-    overflow: bool,
-    zero: bool,
-    carry: bool,
-    logical_carry: bool,
-    sign: bool,
+    flags: [bool; FLAG_COUNT],
 }
 impl Cpu {
     #[inline]
@@ -340,11 +358,7 @@ impl Cpu {
             lhs_latch: Byte::ZERO,
             rhs_latch: Byte::ZERO,
 
-            overflow: false,
-            zero: false,
-            carry: false,
-            logical_carry: false,
-            sign: false,
+            flags: [false; FLAG_COUNT],
         }
     }
 
@@ -426,7 +440,11 @@ impl Cpu {
         }
     }
 
-    fn alu_stage2(&mut self, target: Option<AluSource>, carry_override: Option<u16>) {
+    fn alu_stage2(
+        &mut self,
+        target: Option<AluSource>,
+        carry_override: Option<u16>,
+    ) -> [bool; FLAG_COUNT] {
         let lhs: u8 = self.lhs_latch.into();
         let rhs: u8 = self.rhs_latch.into();
 
@@ -436,7 +454,7 @@ impl Cpu {
         let carry_add: u16 = match carry_override {
             Some(v) => v,
             None => {
-                if self.carry {
+                if self.flags[FLAG_CARRY] {
                     0x0001
                 } else {
                     0x0000
@@ -447,26 +465,32 @@ impl Cpu {
         let result_long = lhs_long + rhs_long + carry_add;
         let result = result_long.to_le_bytes()[0];
 
-        self.carry = result_long > 0x00FF;
-        self.zero = result == 0x00;
-        self.sign = (result & 0x80) != 0;
+        let mut new_flags = self.flags.clone();
+        new_flags[FLAG_CARRY] = result_long > 0x00FF;
+        new_flags[FLAG_ZERO] = result == 0x00;
+        new_flags[FLAG_SIGN] = (result & 0x80) != 0;
 
         let lhs_sign = (lhs & 0x80) != 0;
         let rhs_sign = (rhs & 0x80) != 0;
-        self.overflow = (lhs_sign == rhs_sign) && (lhs_sign != self.sign);
+        new_flags[FLAG_OVERFLOW] = (lhs_sign == rhs_sign) && (lhs_sign != new_flags[FLAG_SIGN]);
 
         if let Some(AluSource::Gpr(index)) = target {
             self.gpr[index] = result.into();
         }
+
+        new_flags
     }
 
-    fn shift_op_stage1(&mut self, target: AluSource, op: fn(Byte) -> Byte) {
+    fn shift_op_stage1(&mut self, target: AluSource, op: fn(Byte, u16) -> (Byte, bool)) -> bool {
         let v = match target {
             AluSource::Gpr(index) => self.gpr[index],
         };
 
         self.rhs_latch = Byte::ZERO;
-        self.lhs_latch = op(v);
+        let (lhs, carry) = op(v, if self.flags[FLAG_LOGICAL_CARRY] { 1 } else { 0 });
+        self.lhs_latch = lhs;
+
+        carry
     }
 
     fn logic_op_stage1(
@@ -522,6 +546,8 @@ impl Cpu {
         let mut fetch_stage1 = true; // Wether we can fetch this cycle based on pipeline stage 1
         let mut fetch_stage2 = true; // Wether we can fetch and increment the PC this cycle based on pipeline stage 2
 
+        let mut new_flags = self.flags.clone();
+
         //
         // --------------------- Stage 2 ---------------------
         //
@@ -557,56 +583,60 @@ impl Cpu {
             }
             Instruction::Clc => {
                 // Since CLC is achived by executing 0 + 0 on real hardware, it actually sets all the flags
-                self.carry = false;
-                self.zero = false;
-                self.overflow = false;
-                self.sign = false;
+                new_flags[FLAG_CARRY] = false;
+                new_flags[FLAG_ZERO] = false;
+                new_flags[FLAG_OVERFLOW] = false;
+                new_flags[FLAG_SIGN] = false;
             }
             Instruction::Shl(target) => {
-                self.alu_stage2(Some(target), Some(0));
+                new_flags = self.alu_stage2(Some(target), Some(0));
             }
             Instruction::Shr(target) => {
-                self.alu_stage2(Some(target), Some(0));
+                new_flags = self.alu_stage2(Some(target), Some(0));
             }
             Instruction::Add(_, target) => {
-                self.alu_stage2(Some(target), Some(0));
+                new_flags = self.alu_stage2(Some(target), Some(0));
             }
             Instruction::Addc(_, target) => {
-                self.alu_stage2(Some(target), None);
+                new_flags = self.alu_stage2(Some(target), None);
             }
             Instruction::Inc(target) => match target {
-                AluSource::Gpr(index) => self.alu_stage2(Some(AluSource::Gpr(index)), Some(1)),
+                AluSource::Gpr(index) => {
+                    new_flags = self.alu_stage2(Some(AluSource::Gpr(index)), Some(1))
+                }
             },
             Instruction::Incc(target) => {
-                self.alu_stage2(Some(target), None);
+                new_flags = self.alu_stage2(Some(target), None);
             }
             Instruction::Sub(_, target) => {
-                self.alu_stage2(Some(target), Some(1));
+                new_flags = self.alu_stage2(Some(target), Some(1));
             }
             Instruction::Subb(_, target) => {
-                self.alu_stage2(Some(target), None);
+                new_flags = self.alu_stage2(Some(target), None);
             }
             Instruction::Dec(target) => match target {
-                AluSource::Gpr(index) => self.alu_stage2(Some(AluSource::Gpr(index)), Some(0)),
+                AluSource::Gpr(index) => {
+                    new_flags = self.alu_stage2(Some(AluSource::Gpr(index)), Some(0))
+                }
             },
             Instruction::And(_, target) => {
-                self.alu_stage2(Some(target), Some(0));
+                new_flags = self.alu_stage2(Some(target), Some(0));
             }
             Instruction::Or(_, target) => {
-                self.alu_stage2(Some(target), Some(0));
+                new_flags = self.alu_stage2(Some(target), Some(0));
             }
             Instruction::Xor(_, target) => {
-                self.alu_stage2(Some(target), Some(0));
+                new_flags = self.alu_stage2(Some(target), Some(0));
             }
             Instruction::Not(target) => {
-                self.alu_stage2(Some(target), Some(0));
+                new_flags = self.alu_stage2(Some(target), Some(0));
             }
             Instruction::Cmp(_, _) => {
                 // Same as SUB except no target
-                self.alu_stage2(None, Some(1));
+                new_flags = self.alu_stage2(None, Some(1));
             }
             Instruction::Test(_) => {
-                self.alu_stage2(None, Some(0));
+                new_flags = self.alu_stage2(None, Some(0));
             }
             Instruction::Push(source) => {
                 let addr = self.spr[SPR_STACK_POINTER];
@@ -684,21 +714,21 @@ impl Cpu {
                 self.spr[SPR_DESTINATION_INDEX] += 1
             }
             Instruction::Addac => {
-                if self.carry {
+                if self.flags[FLAG_CARRY] {
                     // Same as ADD c,a
-                    self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
+                    new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
                 } else {
                     // Same as AND c,c
-                    self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
+                    new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_C)), Some(0));
                 }
             }
             Instruction::Subae => {
-                if self.carry {
+                if self.flags[FLAG_CARRY] {
                     // Same as SUB d,c
-                    self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(1));
+                    new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(1));
                 } else {
                     // Same as AND d,d
-                    self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(0));
+                    new_flags = self.alu_stage2(Some(AluSource::Gpr(GPR_D)), Some(0));
                 }
             }
             _ => {}
@@ -733,87 +763,91 @@ impl Cpu {
                 self.jump_to(target);
             }
             Instruction::Jo(target) => {
-                if self.overflow {
+                if self.flags[FLAG_OVERFLOW] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jno(target) => {
-                if !self.overflow {
+                if !self.flags[FLAG_OVERFLOW] {
                     self.jump_to(target);
                 }
             }
             Instruction::Js(target) => {
-                if self.sign {
+                if self.flags[FLAG_SIGN] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jns(target) => {
-                if !self.sign {
+                if !self.flags[FLAG_SIGN] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jz(target) => {
-                if self.zero {
+                if self.flags[FLAG_ZERO] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jnz(target) => {
-                if !self.zero {
+                if !self.flags[FLAG_ZERO] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jc(target) => {
-                if self.carry {
+                if self.flags[FLAG_CARRY] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jnc(target) => {
-                if !self.carry {
+                if !self.flags[FLAG_CARRY] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jna(target) => {
-                if self.carry || self.zero {
+                if self.flags[FLAG_CARRY] || self.flags[FLAG_ZERO] {
                     self.jump_to(target);
                 }
             }
             Instruction::Ja(target) => {
-                if !self.carry && !self.zero {
+                if !self.flags[FLAG_CARRY] && !self.flags[FLAG_ZERO] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jl(target) => {
-                if self.sign != self.overflow {
+                if self.flags[FLAG_SIGN] != self.flags[FLAG_OVERFLOW] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jge(target) => {
-                if self.sign == self.overflow {
+                if self.flags[FLAG_SIGN] == self.flags[FLAG_OVERFLOW] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jle(target) => {
-                if self.zero || (self.sign != self.overflow) {
+                if self.flags[FLAG_ZERO] || (self.flags[FLAG_SIGN] != self.flags[FLAG_OVERFLOW]) {
                     self.jump_to(target);
                 }
             }
             Instruction::Jg(target) => {
-                if !self.zero && (self.sign == self.overflow) {
+                if !self.flags[FLAG_ZERO] && (self.flags[FLAG_SIGN] == self.flags[FLAG_OVERFLOW]) {
                     self.jump_to(target);
                 }
             }
             Instruction::Jlc(target) => {
-                if self.logical_carry {
+                if self.flags[FLAG_LOGICAL_CARRY] {
                     self.jump_to(target);
                 }
             }
             Instruction::Jnlc(target) => {
-                if !self.logical_carry {
+                if !self.flags[FLAG_LOGICAL_CARRY] {
                     self.jump_to(target);
                 }
             }
-            Instruction::Shl(target) => self.shift_op_stage1(target, |v| v << 1),
-            Instruction::Shr(target) => self.shift_op_stage1(target, |v| v >> 1),
+            Instruction::Shl(target) => {
+                new_flags[FLAG_LOGICAL_CARRY] = self.shift_op_stage1(target, shift_left)
+            }
+            Instruction::Shr(target) => {
+                new_flags[FLAG_LOGICAL_CARRY] = self.shift_op_stage1(target, shift_right)
+            }
             Instruction::Add(source, target) => {
                 self.arithmetic_op_stage1(source, target, false);
             }
@@ -880,7 +914,7 @@ impl Cpu {
                 self.spr[SPR_RETURN_ADDRESS] = addr;
             }
             Instruction::Addac => {
-                if self.carry {
+                if self.flags[FLAG_CARRY] {
                     // Same as ADD c,a
                     self.arithmetic_op_stage1(AluSource::Gpr(GPR_A), AluSource::Gpr(GPR_C), false);
                 } else {
@@ -891,7 +925,7 @@ impl Cpu {
                 }
             }
             Instruction::Subae => {
-                if self.carry {
+                if self.flags[FLAG_CARRY] {
                     // Same as SUB d,c
                     self.arithmetic_op_stage1(AluSource::Gpr(GPR_C), AluSource::Gpr(GPR_D), true);
                 } else {
@@ -903,6 +937,8 @@ impl Cpu {
             }
             _ => {}
         }
+
+        self.flags = new_flags;
 
         //
         // --------------------- Stage 0 ---------------------
@@ -931,6 +967,12 @@ impl Cpu {
 }
 impl Display for Cpu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let overflow_val = if self.flags[FLAG_OVERFLOW] { 1 } else { 0 };
+        let zero_val = if self.flags[FLAG_ZERO] { 1 } else { 0 };
+        let carry_val = if self.flags[FLAG_CARRY] { 1 } else { 0 };
+        let logical_carry_val = if self.flags[FLAG_LOGICAL_CARRY] { 1 } else { 0 };
+        let sign_val = if self.flags[FLAG_SIGN] { 1 } else { 0 };
+
         writeln!(f, "PC: 0x{:0>4X}", self.spr[SPR_PROGRAM_COUNTER])?;
         writeln!(f, "RA: 0x{:0>4X}", self.spr[SPR_RETURN_ADDRESS])?;
         writeln!(f, "SP: 0x{:0>4X}", self.spr[SPR_STACK_POINTER])?;
@@ -946,6 +988,13 @@ impl Display for Cpu {
         writeln!(f, "TH: 0x{:0>2X}", self.transfer.high())?;
         writeln!(f)?;
         writeln!(f, "Constant: 0x{:0>2X}", self.constant)?;
+        writeln!(f)?;
+        writeln!(f, "O Z C L S")?;
+        writeln!(
+            f,
+            "{} {} {} {} {}",
+            overflow_val, zero_val, carry_val, logical_carry_val, sign_val
+        )?;
         writeln!(f)?;
         writeln!(f, "Stage 0: {}", self.stage0_instruction)?;
         writeln!(f, "Stage 1: {}", self.stage1_instruction)?;
@@ -1357,4 +1406,109 @@ fn decode_opcode(opcode: u8) -> Instruction {
         0xFE => Instruction::Test(AluSource::Gpr(GPR_C)), // test c
         0xFF => Instruction::Test(AluSource::Gpr(GPR_D)), // test d
     }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuState {
+    // registers
+    pub transfer: Word,
+    pub program_counter: Word,
+    pub return_address: Word,
+    pub stack_pointer: Word,
+    pub source_index: Word,
+    pub destination_index: Word,
+    pub a: Byte,
+    pub b: Byte,
+    pub c: Byte,
+    pub d: Byte,
+
+    // status flags
+    pub overflow: bool,
+    pub zero: bool,
+    pub carry: bool,
+    pub logical_carry: bool,
+    pub sign: bool,
+}
+#[cfg(test)]
+impl Default for CpuState {
+    fn default() -> Self {
+        Self {
+            transfer: Word::ZERO,
+            program_counter: Word::ZERO,
+            return_address: Word::ZERO,
+            stack_pointer: Word::ZERO,
+            source_index: Word::ZERO,
+            destination_index: Word::ZERO,
+            a: Byte::ZERO,
+            b: Byte::ZERO,
+            c: Byte::ZERO,
+            d: Byte::ZERO,
+            overflow: false,
+            zero: false,
+            carry: false,
+            logical_carry: false,
+            sign: false,
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn test_code(
+    memory: &mut Memory,
+    cycle_count: usize,
+    initial_state: CpuState,
+    expected_state: CpuState,
+) {
+    let mut cpu = Cpu::new();
+    cpu.reset();
+
+    cpu.transfer = initial_state.transfer;
+    cpu.spr = [
+        initial_state.program_counter,
+        initial_state.return_address,
+        initial_state.stack_pointer,
+        initial_state.source_index,
+        initial_state.destination_index,
+    ];
+    cpu.gpr = [
+        initial_state.a,
+        initial_state.b,
+        initial_state.c,
+        initial_state.d,
+    ];
+    cpu.flags[FLAG_OVERFLOW] = initial_state.overflow;
+    cpu.flags[FLAG_ZERO] = initial_state.zero;
+    cpu.flags[FLAG_CARRY] = initial_state.carry;
+    cpu.flags[FLAG_LOGICAL_CARRY] = initial_state.logical_carry;
+    cpu.flags[FLAG_SIGN] = initial_state.sign;
+
+    let mut lcd = Lcd::new();
+    let mut uart = Uart::new();
+    let mut audio = Audio::new();
+
+    for _ in 0..cycle_count {
+        cpu.clock(memory, &mut lcd, &mut uart, &mut audio);
+        uart.host_read();
+    }
+
+    let actual_state = CpuState {
+        transfer: cpu.transfer,
+        program_counter: cpu.spr[SPR_PROGRAM_COUNTER],
+        return_address: cpu.spr[SPR_RETURN_ADDRESS],
+        stack_pointer: cpu.spr[SPR_STACK_POINTER],
+        source_index: cpu.spr[SPR_SOURCE_INDEX],
+        destination_index: cpu.spr[SPR_DESTINATION_INDEX],
+        a: cpu.gpr[GPR_A],
+        b: cpu.gpr[GPR_B],
+        c: cpu.gpr[GPR_C],
+        d: cpu.gpr[GPR_D],
+        overflow: cpu.flags[FLAG_OVERFLOW],
+        zero: cpu.flags[FLAG_ZERO],
+        carry: cpu.flags[FLAG_CARRY],
+        logical_carry: cpu.flags[FLAG_LOGICAL_CARRY],
+        sign: cpu.flags[FLAG_SIGN],
+    };
+
+    assert_eq!(actual_state, expected_state);
 }

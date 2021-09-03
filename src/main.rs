@@ -3,6 +3,8 @@
 
 mod cpu;
 mod device;
+#[cfg(test)]
+mod tests;
 mod types;
 
 use cpu::Cpu;
@@ -12,9 +14,10 @@ use types::*;
 use std::collections::VecDeque;
 use std::io::{Stdout, Write};
 
-use crossterm::cursor::{MoveDown, MoveToColumn};
-use crossterm::style::Print;
-use crossterm::QueueableCommand;
+use crossterm::cursor::*;
+use crossterm::style::*;
+use crossterm::terminal::*;
+use crossterm::{ExecutableCommand, QueueableCommand};
 use ggez::conf::{NumSamples, WindowMode, WindowSetup};
 use ggez::event::{EventHandler, KeyCode, KeyMods};
 use ggez::graphics::{
@@ -62,6 +65,12 @@ impl Memory {
         Box::new(Self::new())
     }
 
+    pub fn from_rom(rom: &[u8]) -> Box<Self> {
+        let mut data = [0; 0x10000];
+        data[0..rom.len()].copy_from_slice(rom);
+        Box::new(Self { data })
+    }
+
     #[inline]
     pub fn read(&self, addr: u16) -> u8 {
         self.data[addr as usize]
@@ -70,6 +79,46 @@ impl Memory {
     #[inline]
     pub fn write(&mut self, addr: u16, value: u8) {
         self.data[addr as usize] = value;
+    }
+}
+
+struct Utf8Builder {
+    byte_count: usize,
+    bytes: Vec<u8>,
+}
+impl Utf8Builder {
+    pub fn new(first_byte: u8) -> Self {
+        let byte_count = if (first_byte & 0b11111000) == 0b11110000 {
+            4
+        } else if (first_byte & 0b11110000) == 0b11100000 {
+            3
+        } else {
+            2
+        };
+
+        let mut bytes = Vec::with_capacity(byte_count);
+        bytes.push(first_byte);
+
+        Self { byte_count, bytes }
+    }
+
+    pub fn process_data(&mut self, data: u8) -> Option<char> {
+        self.bytes.push(data);
+
+        if self.bytes.len() == self.byte_count {
+            if let Ok(s) = String::from_utf8(self.bytes.clone()) {
+                let chars: Vec<char> = s.chars().collect();
+                if chars.len() > 0 {
+                    Some(chars[0])
+                } else {
+                    Some(char::REPLACEMENT_CHARACTER)
+                }
+            } else {
+                Some(char::REPLACEMENT_CHARACTER)
+            }
+        } else {
+            None
+        }
     }
 }
 
@@ -87,17 +136,24 @@ struct EmuState {
 
     stdout: Stdout,
     input_queue: VecDeque<u8>,
+    output_queue: VecDeque<u8>,
+    partial_char: Option<Utf8Builder>,
 
     font: Font,
     show_debug_info: bool,
 }
 impl EmuState {
-    pub fn create(font: Font) -> Self {
-        // ToDo: load ROM
+    pub fn create(font: Font) -> GameResult<Self> {
+        const ROM_BYTES: &[u8] = include_bytes!("../res/snek.bin");
+        //const ROM_BYTES: &[u8] = include_bytes!("../res/rom.bin");
 
-        Self {
+        let mut stdout = std::io::stdout();
+        stdout.execute(Clear(ClearType::All))?;
+        stdout.execute(MoveTo(0, 0))?;
+
+        Ok(Self {
             cpu: Cpu::new(),
-            memory: Memory::create(),
+            memory: Memory::from_rom(ROM_BYTES),
             lcd: Lcd::new(),
             uart: Uart::new(),
             audio: Audio::new(),
@@ -110,12 +166,14 @@ impl EmuState {
                 .report_interval_s(0.5)
                 .build_with_target_rate(FRAME_RATE),
 
-            stdout: std::io::stdout(),
+            stdout,
             input_queue: VecDeque::new(),
+            output_queue: VecDeque::new(),
+            partial_char: None,
 
             font,
             show_debug_info: true,
-        }
+        })
     }
 
     #[inline]
@@ -125,25 +183,31 @@ impl EmuState {
 
     fn process_uart(&mut self) -> GameResult {
         if let Some(data) = self.uart.host_read() {
-            if data == 0x09 {
-                self.stdout.queue(Print('\t'))?;
-            } else if data == 0x0A {
-                self.stdout.queue(MoveDown(1))?;
-            } else if data == 0x0D {
-                self.stdout.queue(MoveToColumn(0))?;
-            } else {
-                let c = char::from(data);
-
-                if c.is_ascii() && !c.is_ascii_control() {
-                    self.stdout.queue(Print(c))?;
-                } else {
-                    self.stdout.queue(Print(char::REPLACEMENT_CHARACTER))?;
-                }
-            }
+            self.output_queue.push_back(data);
         }
 
         if let Some(data) = self.input_queue.pop_front() {
             self.uart.host_write(data);
+        }
+
+        Ok(())
+    }
+
+    fn process_terminal(&mut self) -> GameResult {
+        while let Some(data) = self.output_queue.pop_front() {
+            if let Some(high_bytes) = &mut self.partial_char {
+                if let Some(c) = high_bytes.process_data(data) {
+                    self.stdout.queue(Print(c))?;
+                    self.partial_char = None;
+                }
+            } else {
+                if (data & 0x80) == 0 {
+                    let c = char::from(data);
+                    self.stdout.queue(Print(c))?;
+                } else {
+                    self.partial_char = Some(Utf8Builder::new(data));
+                }
+            }
         }
 
         Ok(())
@@ -169,6 +233,8 @@ impl EmuState {
 
     fn single_clock(&mut self) -> GameResult<bool> {
         let break_point = self.clock()?;
+
+        self.process_terminal()?;
         self.stdout.flush()?;
 
         Ok(break_point)
@@ -215,6 +281,7 @@ impl EventHandler<GameError> for EmuState {
             }
         }
 
+        self.process_terminal()?;
         self.stdout.flush()?;
 
         timer::yield_now();
@@ -297,7 +364,7 @@ fn main() -> GameResult {
     const FONT_BYTES: &[u8] = include_bytes!("../res/SourceCodePro-Bold.ttf");
     let font = Font::new_glyph_font_bytes(&mut ctx, FONT_BYTES)?;
 
-    let mut state = EmuState::create(font);
+    let mut state = EmuState::create(font)?;
     state.reset();
 
     event::run(ctx, event_loop, state)

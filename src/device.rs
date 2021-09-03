@@ -104,7 +104,7 @@ impl Uart {
 
     #[inline]
     pub fn write_data(&mut self, value: u8) {
-        let full = self.transmit_fifo.enqueue(value);
+        let full = !self.transmit_fifo.enqueue(value);
         assert!(!full, "Cannot transmit any more data, buffer is full");
     }
 
@@ -115,7 +115,7 @@ impl Uart {
 
     #[inline]
     pub fn host_write(&mut self, value: u8) {
-        let full = self.receive_fifo.enqueue(value);
+        let full = !self.receive_fifo.enqueue(value);
         assert!(!full, "Cannot receive any more data, buffer is full");
     }
 }
