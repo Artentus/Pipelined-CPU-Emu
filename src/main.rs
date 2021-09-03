@@ -13,10 +13,9 @@ use types::*;
 
 use std::collections::VecDeque;
 use std::io::{Stdout, Write};
+use std::time::Duration;
 
-use crossterm::cursor::*;
-use crossterm::style::*;
-use crossterm::terminal::*;
+use crossterm::{cursor, style, terminal};
 use crossterm::{ExecutableCommand, QueueableCommand};
 use ggez::conf::{NumSamples, WindowMode, WindowSetup};
 use ggez::event::{EventHandler, KeyCode, KeyMods};
@@ -147,9 +146,13 @@ impl EmuState {
         const ROM_BYTES: &[u8] = include_bytes!("../res/snek.bin");
         //const ROM_BYTES: &[u8] = include_bytes!("../res/rom.bin");
 
+        terminal::enable_raw_mode()?;
+
         let mut stdout = std::io::stdout();
-        stdout.execute(Clear(ClearType::All))?;
-        stdout.execute(MoveTo(0, 0))?;
+        stdout.execute(terminal::EnterAlternateScreen)?;
+        stdout.execute(terminal::Clear(terminal::ClearType::All))?;
+        stdout.execute(terminal::Clear(terminal::ClearType::Purge))?;
+        stdout.execute(cursor::MoveTo(0, 0))?;
 
         Ok(Self {
             cpu: Cpu::new(),
@@ -197,13 +200,13 @@ impl EmuState {
         while let Some(data) = self.output_queue.pop_front() {
             if let Some(high_bytes) = &mut self.partial_char {
                 if let Some(c) = high_bytes.process_data(data) {
-                    self.stdout.queue(Print(c))?;
+                    self.stdout.queue(style::Print(c))?;
                     self.partial_char = None;
                 }
             } else {
                 if (data & 0x80) == 0 {
                     let c = char::from(data);
-                    self.stdout.queue(Print(c))?;
+                    self.stdout.queue(style::Print(c))?;
                 } else {
                     self.partial_char = Some(Utf8Builder::new(data));
                 }
@@ -262,6 +265,39 @@ impl EventHandler<GameError> for EmuState {
                     ctx,
                     &format!("{} v{} - {:.1} fps", TITLE, VERSION, fps),
                 );
+            }
+        }
+
+        while crossterm::event::poll(Duration::ZERO)? {
+            let event = crossterm::event::read()?;
+            if let crossterm::event::Event::Key(key_event) = event {
+                match key_event.code {
+                    crossterm::event::KeyCode::Backspace => {}
+                    crossterm::event::KeyCode::Enter => {}
+                    crossterm::event::KeyCode::Left => {}
+                    crossterm::event::KeyCode::Right => {}
+                    crossterm::event::KeyCode::Up => {}
+                    crossterm::event::KeyCode::Down => {}
+                    crossterm::event::KeyCode::Home => {}
+                    crossterm::event::KeyCode::End => {}
+                    crossterm::event::KeyCode::PageUp => {}
+                    crossterm::event::KeyCode::PageDown => {}
+                    crossterm::event::KeyCode::Tab => {}
+                    crossterm::event::KeyCode::BackTab => {}
+                    crossterm::event::KeyCode::Delete => {}
+                    crossterm::event::KeyCode::Insert => {}
+                    crossterm::event::KeyCode::F(_) => {}
+                    crossterm::event::KeyCode::Char(c) => {
+                        let mut buffer = [0; 4];
+                        let s = c.encode_utf8(&mut buffer);
+                        let bytes = s.as_bytes();
+                        for b in bytes.iter() {
+                            self.input_queue.push_back(*b);
+                        }
+                    }
+                    crossterm::event::KeyCode::Null => {}
+                    crossterm::event::KeyCode::Esc => {}
+                }
             }
         }
 
@@ -345,6 +381,21 @@ impl EventHandler<GameError> for EmuState {
             }
             _ => {}
         }
+    }
+
+    fn quit_event(&mut self, _ctx: &mut Context) -> bool {
+        let _ = terminal::disable_raw_mode();
+        let _ = self.stdout.execute(terminal::LeaveAlternateScreen);
+        let _ = self
+            .stdout
+            .execute(terminal::Clear(terminal::ClearType::All));
+        let _ = self
+            .stdout
+            .execute(terminal::Clear(terminal::ClearType::Purge));
+        let _ = self.stdout.execute(cursor::MoveTo(0, 0));
+        let _ = self.stdout.execute(cursor::Show);
+
+        false
     }
 }
 
