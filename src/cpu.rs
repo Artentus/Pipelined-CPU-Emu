@@ -547,6 +547,7 @@ impl Cpu {
         let mut break_point = false;
         let mut fetch_stage1 = true; // Wether we can fetch this cycle based on pipeline stage 1
         let mut fetch_stage2 = true; // Wether we can fetch and increment the PC this cycle based on pipeline stage 2
+        let mut jump = false;
 
         let mut new_flags = self.flags.clone();
 
@@ -751,85 +752,102 @@ impl Cpu {
             },
             Instruction::Jmp(target) => {
                 self.jump_to(target);
+                jump = true;
             }
             Instruction::Jo(target) => {
                 if self.flags[FLAG_OVERFLOW] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jno(target) => {
                 if !self.flags[FLAG_OVERFLOW] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Js(target) => {
                 if self.flags[FLAG_SIGN] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jns(target) => {
                 if !self.flags[FLAG_SIGN] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jz(target) => {
                 if self.flags[FLAG_ZERO] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jnz(target) => {
                 if !self.flags[FLAG_ZERO] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jc(target) => {
                 if self.flags[FLAG_CARRY] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jnc(target) => {
                 if !self.flags[FLAG_CARRY] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jna(target) => {
                 if self.flags[FLAG_CARRY] || self.flags[FLAG_ZERO] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Ja(target) => {
                 if !self.flags[FLAG_CARRY] && !self.flags[FLAG_ZERO] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jl(target) => {
                 if self.flags[FLAG_SIGN] != self.flags[FLAG_OVERFLOW] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jge(target) => {
                 if self.flags[FLAG_SIGN] == self.flags[FLAG_OVERFLOW] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jle(target) => {
                 if self.flags[FLAG_ZERO] || (self.flags[FLAG_SIGN] != self.flags[FLAG_OVERFLOW]) {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jg(target) => {
                 if !self.flags[FLAG_ZERO] && (self.flags[FLAG_SIGN] == self.flags[FLAG_OVERFLOW]) {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jlc(target) => {
                 if self.flags[FLAG_LOGICAL_CARRY] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Jnlc(target) => {
                 if !self.flags[FLAG_LOGICAL_CARRY] {
                     self.jump_to(target);
+                    jump = true;
                 }
             }
             Instruction::Shl(target) => {
@@ -949,8 +967,10 @@ impl Cpu {
             self.stage0_instruction = self.stage1_instruction;
         }
 
-        // If stage 2 didn't access the memory bus, increment PC
-        if fetch_stage2 {
+        // If stage 2 didn't access the memory bus and we didn't jump, increment PC
+        if fetch_stage2 && !jump {
+            // On hardware, jumping and incrementing PC is actually undefined behaviour,
+            // but we implement it here like you'd expect it to work.
             self.spr[SPR_PROGRAM_COUNTER] += 1;
         }
 

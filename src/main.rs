@@ -271,13 +271,35 @@ impl EventHandler<GameError> for EmuState {
         while crossterm::event::poll(Duration::ZERO)? {
             let event = crossterm::event::read()?;
             if let crossterm::event::Event::Key(key_event) = event {
+                const ESC_SEQ: [u8; 2] = [0x1B, 0x5B];
+
                 match key_event.code {
                     crossterm::event::KeyCode::Backspace => {}
                     crossterm::event::KeyCode::Enter => {}
-                    crossterm::event::KeyCode::Left => {}
-                    crossterm::event::KeyCode::Right => {}
-                    crossterm::event::KeyCode::Up => {}
-                    crossterm::event::KeyCode::Down => {}
+                    crossterm::event::KeyCode::Left => {
+                        self.input_queue.push_back(ESC_SEQ[0]);
+                        self.input_queue.push_back(ESC_SEQ[1]);
+                        self.input_queue.push_back(31); // ASCII 1
+                        self.input_queue.push_back(68); // ASCII D
+                    }
+                    crossterm::event::KeyCode::Right => {
+                        self.input_queue.push_back(ESC_SEQ[0]);
+                        self.input_queue.push_back(ESC_SEQ[1]);
+                        self.input_queue.push_back(31); // ASCII 1
+                        self.input_queue.push_back(67); // ASCII C
+                    }
+                    crossterm::event::KeyCode::Up => {
+                        self.input_queue.push_back(ESC_SEQ[0]);
+                        self.input_queue.push_back(ESC_SEQ[1]);
+                        self.input_queue.push_back(31); // ASCII 1
+                        self.input_queue.push_back(65); // ASCII A
+                    }
+                    crossterm::event::KeyCode::Down => {
+                        self.input_queue.push_back(ESC_SEQ[0]);
+                        self.input_queue.push_back(ESC_SEQ[1]);
+                        self.input_queue.push_back(31); // ASCII 1
+                        self.input_queue.push_back(66); // ASCII B
+                    }
                     crossterm::event::KeyCode::Home => {}
                     crossterm::event::KeyCode::End => {}
                     crossterm::event::KeyCode::PageUp => {}
