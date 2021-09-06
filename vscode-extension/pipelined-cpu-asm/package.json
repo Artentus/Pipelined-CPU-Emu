@@ -1,0 +1,25 @@
+{
+    "name": "pipelined-cpu-asm",
+    "displayName": "Pipelined CPU Asm",
+    "description": "Syntax highlighting for Pipelined CPU Asm",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.60.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [{
+            "id": "pcpuasm",
+            "aliases": ["Pipelined CPU Asm", "pcpuasm"],
+            "extensions": [".asm", ".inc"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "pcpuasm",
+            "scopeName": "source.pcpuasm",
+            "path": "./syntaxes/pcpuasm.tmLanguage.json"
+        }]
+    }
+}

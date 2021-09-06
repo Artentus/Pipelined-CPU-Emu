@@ -1,0 +1,64 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "Pipelined CPU Asm",
+	"patterns": [
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#meta"
+		},
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#comments"
+		}
+	],
+	"repository": {
+		"keywords": {
+			"patterns": [
+				{
+					"name": "keyword.control.directive.pcpuasm",
+					"match": "(?i)\\.\\b(architecture|export|entry|segment|subsegment|org|include|align)\\b"
+				},
+				{
+					"name": "keyword.register.pcpuasm",
+					"match": "(?i)\\b(a|b|c|d|ab|cd|tl|th|tx|ra|sp|si|di)\\b"
+				},
+				{
+					"name": "keyword.instruction.pcpuasm",
+					"match": "(?i)\\b(db|dw|nop|mov|dec|inc|out|in|break|lodsb|stosb|call|ret|jmp|jo|jno|js|jns|jz|jnz|je|jne|jc|jnae|jb|jnc|jae|jnb|jbe|jna|ja|jnbe|jl|jnge|jge|jnl|jle|jng|jg|jnle|jlc|jnlc|push|pop|clc|shl|shr|add|addc|addac|incc|sub|subb|subae|and|or|xor|not|cmp|test)\\b"
+				}
+			]
+		},
+		"meta": {
+			"patterns": [
+				{
+					"name": "meta.preprocessor.numeric.label.pcpuasm",
+					"match": "\\b([_A-Za-z][_A-Za-z0-9]*)\\b\\:"
+				}
+			]
+		},
+		"strings": {
+			"name": "string.quoted.double.pcpuasm",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.pcpuasm",
+					"match": "\\\\."
+				}
+			]
+		},
+		"comments": {
+			"match": "((;).*$)",
+			"captures": {
+				"1": {
+					"name": "comment.line.pcpuasm"
+				}
+			}
+		}
+	},
+	"scopeName": "source.pcpuasm"
+}

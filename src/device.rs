@@ -44,11 +44,6 @@ impl<T, const N: usize> Queue<T, N> {
         self.len
     }
 
-    #[inline]
-    pub fn is_full(&self) -> bool {
-        self.len == N
-    }
-
     pub fn enqueue(&mut self, item: T) -> bool {
         if self.len == N {
             // the queue is full
