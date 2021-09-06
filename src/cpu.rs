@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use crate::{Audio, Byte, Lcd, Memory, Uart, Word};
+use crate::{Audio, Byte, Lcd, Memory, Uart, Vga, Word};
 
 const SPR_COUNT: usize = 5;
 const SPR_PROGRAM_COUNTER: usize = 0;
@@ -185,6 +185,7 @@ enum IORegister {
     UartData,
     UartCtrl,
     AudioData,
+    VgaData,
 }
 impl Display for IORegister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -194,6 +195,7 @@ impl Display for IORegister {
             IORegister::UartData => write!(f, "uartData"),
             IORegister::UartCtrl => write!(f, "uartCtrl"),
             IORegister::AudioData => write!(f, "audioData"),
+            IORegister::VgaData => write!(f, "vgaData"),
         }
     }
 }
@@ -308,6 +310,7 @@ impl Display for Instruction {
     }
 }
 
+#[inline]
 fn shift_left(value: Byte, carry: u16) -> (Byte, bool) {
     let val: u8 = value.into();
     let long_val = val as u16;
@@ -316,6 +319,7 @@ fn shift_left(value: Byte, carry: u16) -> (Byte, bool) {
     (bytes[0].into(), bytes[1] != 0)
 }
 
+#[inline]
 fn shift_right(value: Byte, carry: u16) -> (Byte, bool) {
     let val: u8 = value.into();
     let long_val = val as u16;
@@ -421,6 +425,7 @@ impl Cpu {
         }
     }
 
+    #[inline]
     fn load_word(&self, source: LoadWordSource) -> Word {
         match source {
             LoadWordSource::Spr(index) => self.spr[index],
@@ -428,6 +433,7 @@ impl Cpu {
         }
     }
 
+    #[inline]
     fn store_word(&mut self, target: StoreWordTarget, value: Word) {
         match target {
             StoreWordTarget::Spr(index) => self.spr[index] = value,
@@ -435,6 +441,7 @@ impl Cpu {
         }
     }
 
+    #[inline]
     fn jump_to(&mut self, target: JumpTarget) {
         match target {
             JumpTarget::Transfer => self.spr[SPR_PROGRAM_COUNTER] = self.transfer,
@@ -524,6 +531,7 @@ impl Cpu {
         self.rhs_latch = if invert_rhs { !b } else { b };
     }
 
+    #[inline]
     fn flip_pc_ra(&mut self) {
         // In hardware this is implemented with register renaming,
         // but in the emulator we just swap the values for simplicity.
@@ -539,6 +547,7 @@ impl Cpu {
         lcd: &mut Lcd,
         uart: &mut Uart,
         audio: &mut Audio,
+        vga: &mut Vga,
     ) -> bool {
         // Move instruction stream forward
         self.stage2_instruction = self.stage1_instruction;
@@ -680,6 +689,7 @@ impl Cpu {
                     IORegister::UartData => uart.write_data(value.into()),
                     IORegister::UartCtrl => unreachable!(), // Register is not writable, sanity check
                     IORegister::AudioData => audio.write_data(value.into()),
+                    IORegister::VgaData => vga.write_data(value.into()),
                 }
             }
             Instruction::In(source, target) => {
@@ -689,6 +699,7 @@ impl Cpu {
                     IORegister::UartData => uart.read_data(),
                     IORegister::UartCtrl => uart.read_ctrl(),
                     IORegister::AudioData => audio.read_data(),
+                    IORegister::VgaData => vga.read_data(),
                 };
 
                 match target {
@@ -1114,9 +1125,7 @@ fn decode_opcode(opcode: u8) -> Instruction {
             StoreWordTarget::Spr(SPR_DESTINATION_INDEX),
         ), // mov di,sp
 
-        0x30 => Instruction::DecWord(CountTarget::Spr(SPR_RETURN_ADDRESS)), // dec ra
-        0x31 => Instruction::DecWord(CountTarget::Spr(SPR_STACK_POINTER)),  // dec sp
-        0x32 => Instruction::DecWord(CountTarget::Spr(SPR_SOURCE_INDEX)),   // dec si
+        0x32 => Instruction::DecWord(CountTarget::Spr(SPR_SOURCE_INDEX)), // dec si
         0x33 => Instruction::DecWord(CountTarget::Spr(SPR_DESTINATION_INDEX)), // dec di
 
         0x34 => Instruction::IncWord(CountTarget::Spr(SPR_STACK_POINTER)), // inc sp
@@ -1134,6 +1143,9 @@ fn decode_opcode(opcode: u8) -> Instruction {
 
         0x3C => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::AudioData), // out audioData,a
         0x3D => Instruction::In(IORegister::AudioData, AluSource::Gpr(GPR_A)),  // in a,audioData
+
+        0x30 => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::VgaData), // out vgaData,a
+        0x31 => Instruction::In(IORegister::VgaData, AluSource::Gpr(GPR_A)),  // in a,vgaData
 
         0x3F => Instruction::Break, // break
 
@@ -1498,9 +1510,10 @@ pub fn test_code(
     let mut lcd = Lcd::new();
     let mut uart = Uart::new();
     let mut audio = Audio::new();
+    let mut vga = Vga::new();
 
     for _ in 0..cycle_count {
-        cpu.clock(memory, &mut lcd, &mut uart, &mut audio);
+        cpu.clock(memory, &mut lcd, &mut uart, &mut audio, &mut vga);
         uart.host_read();
     }
 

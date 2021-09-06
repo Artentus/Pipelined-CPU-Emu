@@ -8,13 +8,15 @@ mod tests;
 mod types;
 
 use cpu::Cpu;
-use device::{Audio, Lcd, Uart};
+use device::{Audio, Lcd, Uart, Vga};
 use types::*;
 
 use std::collections::VecDeque;
 use std::io::{Stdout, Write};
+use std::sync::Arc;
 use std::time::Duration;
 
+use crossbeam::queue::SegQueue;
 use crossterm::{cursor, style, terminal};
 use crossterm::{ExecutableCommand, QueueableCommand};
 use ggez::conf::{NumSamples, WindowMode, WindowSetup};
@@ -37,6 +39,11 @@ const FRACT_CYCLES_PER_FRAME: f64 = CYCLES_PER_FRAME - (WHOLE_CYCLES_PER_FRAME a
 
 const UART_BAUD_RATE: f64 = 115_200.0; // 115.2 kHz
 const CYCLES_PER_BAUD: f64 = CLOCK_RATE / UART_BAUD_RATE;
+
+const AUDIO_CLOCK_RATE: f64 = 1_843_200.0 / 8.0; // 1.8432 MHz with fixed by 16 divider
+const AUDIO_CYCLES_PER_CPU_CYLCE: f64 = AUDIO_CLOCK_RATE / CLOCK_RATE;
+const SAMPLE_RATE: u32 = 44100;
+const AUDIO_CYCLES_PER_SAMPLE: f64 = AUDIO_CLOCK_RATE / (SAMPLE_RATE as f64);
 
 fn format_clock_rate(clock_rate: f64) -> String {
     if clock_rate > 999_000_000.0 {
@@ -121,28 +128,71 @@ impl Utf8Builder {
     }
 }
 
+struct SampleSource {
+    sample_buffer: Arc<SegQueue<f32>>,
+}
+impl SampleSource {
+    #[inline]
+    pub fn new(sample_buffer: Arc<SegQueue<f32>>) -> Self {
+        Self { sample_buffer }
+    }
+}
+impl Iterator for SampleSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(sample) = self.sample_buffer.pop() {
+            Some(sample)
+        } else {
+            Some(0.0)
+        }
+    }
+}
+impl rodio::Source for SampleSource {
+    #[inline]
+    fn current_frame_len(&self) -> Option<usize> {
+        None
+    }
+    #[inline]
+    fn channels(&self) -> u16 {
+        1
+    }
+    #[inline]
+    fn sample_rate(&self) -> u32 {
+        SAMPLE_RATE
+    }
+    #[inline]
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
 struct EmuState {
     cpu: Cpu,
     memory: Box<Memory>,
     lcd: Lcd,
     uart: Uart,
     audio: Audio,
+    vga: Vga,
 
     running: bool,
     fractional_cycles: f64,
     baud_cycles: f64,
+    fractional_audio_cycles: f64,
+    audio_cycles: f64,
     loop_helper: LoopHelper,
 
     stdout: Stdout,
     input_queue: VecDeque<u8>,
     output_queue: VecDeque<u8>,
     partial_char: Option<Utf8Builder>,
+    sample_buffer: Arc<SegQueue<f32>>,
 
     font: Font,
     show_debug_info: bool,
 }
 impl EmuState {
-    pub fn create(font: Font) -> GameResult<Self> {
+    pub fn create(font: Font, sample_buffer: Arc<SegQueue<f32>>) -> GameResult<Self> {
         const ROM_BYTES: &[u8] = include_bytes!("../res/snek.bin");
         //const ROM_BYTES: &[u8] = include_bytes!("../res/rom.bin");
 
@@ -160,10 +210,13 @@ impl EmuState {
             lcd: Lcd::new(),
             uart: Uart::new(),
             audio: Audio::new(),
+            vga: Vga::new(),
 
             running: false,
             fractional_cycles: 0.0,
             baud_cycles: 0.0,
+            fractional_audio_cycles: 0.0,
+            audio_cycles: 0.0,
             loop_helper: LoopHelper::builder()
                 .native_accuracy_ns(1_500_000)
                 .report_interval_s(0.5)
@@ -173,6 +226,7 @@ impl EmuState {
             input_queue: VecDeque::new(),
             output_queue: VecDeque::new(),
             partial_char: None,
+            sample_buffer,
 
             font,
             show_debug_info: true,
@@ -182,18 +236,6 @@ impl EmuState {
     #[inline]
     pub fn reset(&mut self) {
         self.cpu.reset();
-    }
-
-    fn process_uart(&mut self) -> GameResult {
-        if let Some(data) = self.uart.host_read() {
-            self.output_queue.push_back(data);
-        }
-
-        if let Some(data) = self.input_queue.pop_front() {
-            self.uart.host_write(data);
-        }
-
-        Ok(())
     }
 
     fn process_terminal(&mut self) -> GameResult {
@@ -216,31 +258,53 @@ impl EmuState {
         Ok(())
     }
 
-    fn clock(&mut self) -> GameResult<bool> {
-        let break_point = self.cpu.clock(
-            self.memory.as_mut(),
-            &mut self.lcd,
-            &mut self.uart,
-            &mut self.audio,
-        );
+    fn clock(&mut self, n: u64) -> GameResult {
+        for _ in 0..n {
+            let break_point = self.cpu.clock(
+                self.memory.as_mut(),
+                &mut self.lcd,
+                &mut self.uart,
+                &mut self.audio,
+                &mut self.vga,
+            );
 
-        self.baud_cycles += 1.0;
-        while self.baud_cycles >= CYCLES_PER_BAUD {
-            self.baud_cycles -= CYCLES_PER_BAUD;
+            self.baud_cycles += 1.0;
+            while self.baud_cycles >= CYCLES_PER_BAUD {
+                self.baud_cycles -= CYCLES_PER_BAUD;
 
-            self.process_uart()?;
+                if let Some(data) = self.uart.host_read() {
+                    self.output_queue.push_back(data);
+                }
+
+                if let Some(data) = self.input_queue.pop_front() {
+                    self.uart.host_write(data);
+                }
+            }
+
+            self.fractional_audio_cycles += AUDIO_CYCLES_PER_CPU_CYLCE;
+            let whole_audio_cycles = self.fractional_audio_cycles as u32;
+            self.fractional_audio_cycles -= whole_audio_cycles as f64;
+
+            for _ in 0..whole_audio_cycles {
+                let sample = self.audio.clock();
+                self.audio_cycles += 1.0;
+                while self.audio_cycles >= AUDIO_CYCLES_PER_SAMPLE {
+                    self.audio_cycles -= AUDIO_CYCLES_PER_SAMPLE;
+
+                    self.sample_buffer.push(sample);
+                }
+            }
+
+            if break_point {
+                self.running = false;
+                break;
+            }
         }
-
-        Ok(break_point)
-    }
-
-    fn single_clock(&mut self) -> GameResult<bool> {
-        let break_point = self.clock()?;
 
         self.process_terminal()?;
         self.stdout.flush()?;
 
-        Ok(break_point)
+        Ok(())
     }
 }
 impl EventHandler<GameError> for EmuState {
@@ -323,24 +387,14 @@ impl EventHandler<GameError> for EmuState {
             }
         }
 
-        while timer::check_update_time(ctx, FRAME_RATE) {
-            if self.running {
-                self.fractional_cycles += FRACT_CYCLES_PER_FRAME;
-                let cycles_to_add = self.fractional_cycles as u64;
-                self.fractional_cycles -= cycles_to_add as f64;
-                let cycle_count = WHOLE_CYCLES_PER_FRAME + cycles_to_add;
+        if self.running {
+            self.fractional_cycles += FRACT_CYCLES_PER_FRAME;
+            let cycles_to_add = self.fractional_cycles as u64;
+            self.fractional_cycles -= cycles_to_add as f64;
+            let cycle_count = WHOLE_CYCLES_PER_FRAME + cycles_to_add;
 
-                for _ in 0..cycle_count {
-                    if self.clock()? {
-                        self.running = false;
-                        break;
-                    }
-                }
-            }
+            self.clock(cycle_count)?;
         }
-
-        self.process_terminal()?;
-        self.stdout.flush()?;
 
         timer::yield_now();
         Ok(())
@@ -396,7 +450,7 @@ impl EventHandler<GameError> for EmuState {
             KeyCode::D => self.show_debug_info = !self.show_debug_info,
             KeyCode::C => {
                 if !self.running {
-                    if let Err(_) = self.single_clock() {
+                    if let Err(_) = self.clock(1) {
                         ggez::event::quit(ctx);
                     }
                 }
@@ -421,7 +475,7 @@ impl EventHandler<GameError> for EmuState {
     }
 }
 
-fn main() -> GameResult {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_setup = WindowSetup::default()
         .title(&format!("{} v{}", TITLE, VERSION))
         .vsync(true)
@@ -437,7 +491,12 @@ fn main() -> GameResult {
     const FONT_BYTES: &[u8] = include_bytes!("../res/SourceCodePro-Bold.ttf");
     let font = Font::new_glyph_font_bytes(&mut ctx, FONT_BYTES)?;
 
-    let mut state = EmuState::create(font)?;
+    let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
+    let sample_buffer = Arc::new(SegQueue::new());
+    let sample_source = SampleSource::new(Arc::clone(&sample_buffer));
+    stream_handle.play_raw(sample_source)?;
+
+    let mut state = EmuState::create(font, sample_buffer)?;
     state.reset();
 
     event::run(ctx, event_loop, state)
