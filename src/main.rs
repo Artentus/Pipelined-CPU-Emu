@@ -1,4 +1,3 @@
-#![feature(maybe_uninit_extra)]
 #![feature(const_panic)]
 
 mod cpu;
@@ -8,7 +7,7 @@ mod tests;
 mod types;
 
 use cpu::Cpu;
-use device::{Audio, Lcd, Uart, Vga};
+use device::{Audio, Lcd, Memory, Uart, Vga};
 use types::*;
 
 use std::collections::VecDeque;
@@ -32,8 +31,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
 
 const CLOCK_RATE: f64 = 1_000_000.0; // 1 MHz
-const FRAME_RATE: u32 = 60;
-const CYCLES_PER_FRAME: f64 = CLOCK_RATE / (FRAME_RATE as f64);
+const FRAME_RATE: f64 = 59.94047619047765; // Actual VGA 60 Hz frequency
+const CYCLES_PER_FRAME: f64 = CLOCK_RATE / FRAME_RATE;
 const WHOLE_CYCLES_PER_FRAME: u64 = CYCLES_PER_FRAME as u64;
 const FRACT_CYCLES_PER_FRAME: f64 = CYCLES_PER_FRAME - (WHOLE_CYCLES_PER_FRAME as f64);
 
@@ -45,6 +44,12 @@ const AUDIO_CYCLES_PER_CPU_CYLCE: f64 = AUDIO_CLOCK_RATE / CLOCK_RATE;
 const SAMPLE_RATE: u32 = 44100;
 const AUDIO_CYCLES_PER_SAMPLE: f64 = AUDIO_CLOCK_RATE / (SAMPLE_RATE as f64);
 
+const VGA_CLOCK_RATE: f64 = 25_175_000.0; // 25.175 MHz
+const VGA_CYCLES_PER_CPU_CYCLE: f64 = VGA_CLOCK_RATE / CLOCK_RATE;
+const SCREEN_WIDTH: u16 = 640;
+const SCREEN_HEIGHT: u16 = 480;
+const SCREEN_SCALE: f32 = 2.0;
+
 fn format_clock_rate(clock_rate: f64) -> String {
     if clock_rate > 999_000_000.0 {
         format!("{:.1} GHz", clock_rate / 1_000_000_000.0)
@@ -54,37 +59,6 @@ fn format_clock_rate(clock_rate: f64) -> String {
         format!("{:.1} kHz", clock_rate / 1_000.0)
     } else {
         format!("{:.0} Hz", clock_rate)
-    }
-}
-
-pub struct Memory {
-    data: [u8; 0x10000],
-}
-impl Memory {
-    #[inline]
-    pub const fn new() -> Self {
-        Self { data: [0; 0x10000] }
-    }
-
-    #[inline]
-    pub fn create() -> Box<Self> {
-        Box::new(Self::new())
-    }
-
-    pub fn from_rom(rom: &[u8]) -> Box<Self> {
-        let mut data = [0; 0x10000];
-        data[0..rom.len()].copy_from_slice(rom);
-        Box::new(Self { data })
-    }
-
-    #[inline]
-    pub fn read(&self, addr: u16) -> u8 {
-        self.data[addr as usize]
-    }
-
-    #[inline]
-    pub fn write(&mut self, addr: u16, value: u8) {
-        self.data[addr as usize] = value;
     }
 }
 
@@ -130,11 +104,15 @@ impl Utf8Builder {
 
 struct SampleSource {
     sample_buffer: Arc<SegQueue<f32>>,
+    last_sample: f32,
 }
 impl SampleSource {
     #[inline]
     pub fn new(sample_buffer: Arc<SegQueue<f32>>) -> Self {
-        Self { sample_buffer }
+        Self {
+            sample_buffer,
+            last_sample: 0.0,
+        }
     }
 }
 impl Iterator for SampleSource {
@@ -142,9 +120,10 @@ impl Iterator for SampleSource {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(sample) = self.sample_buffer.pop() {
+            self.last_sample = sample;
             Some(sample)
         } else {
-            Some(0.0)
+            Some(self.last_sample)
         }
     }
 }
@@ -169,7 +148,7 @@ impl rodio::Source for SampleSource {
 
 struct EmuState {
     cpu: Cpu,
-    memory: Box<Memory>,
+    memory: Memory,
     lcd: Lcd,
     uart: Uart,
     audio: Audio,
@@ -180,6 +159,7 @@ struct EmuState {
     baud_cycles: f64,
     fractional_audio_cycles: f64,
     audio_cycles: f64,
+    vga_cycles: f64,
     loop_helper: LoopHelper,
 
     stdout: Stdout,
@@ -193,8 +173,8 @@ struct EmuState {
 }
 impl EmuState {
     pub fn create(font: Font, sample_buffer: Arc<SegQueue<f32>>) -> GameResult<Self> {
-        const ROM_BYTES: &[u8] = include_bytes!("../res/snek.bin");
-        //const ROM_BYTES: &[u8] = include_bytes!("../res/rom.bin");
+        //const ROM_BYTES: &[u8] = include_bytes!("../res/snek.bin");
+        const ROM_BYTES: &[u8] = include_bytes!("../res/rom.bin");
 
         terminal::enable_raw_mode()?;
 
@@ -217,6 +197,7 @@ impl EmuState {
             baud_cycles: 0.0,
             fractional_audio_cycles: 0.0,
             audio_cycles: 0.0,
+            vga_cycles: 0.0,
             loop_helper: LoopHelper::builder()
                 .native_accuracy_ns(1_500_000)
                 .report_interval_s(0.5)
@@ -236,6 +217,7 @@ impl EmuState {
     #[inline]
     pub fn reset(&mut self) {
         self.cpu.reset();
+        self.vga.reset();
     }
 
     fn process_terminal(&mut self) -> GameResult {
@@ -261,7 +243,7 @@ impl EmuState {
     fn clock(&mut self, n: u64) -> GameResult {
         for _ in 0..n {
             let break_point = self.cpu.clock(
-                self.memory.as_mut(),
+                &mut self.memory,
                 &mut self.lcd,
                 &mut self.uart,
                 &mut self.audio,
@@ -295,6 +277,12 @@ impl EmuState {
                 }
             }
 
+            self.vga_cycles += VGA_CYCLES_PER_CPU_CYCLE;
+            let whole_vga_cycles = self.vga_cycles as u32;
+            self.vga_cycles -= whole_vga_cycles as f64;
+            self.vga.clock(&mut self.memory, whole_vga_cycles);
+            self.memory.reset_vga_conflict();
+
             if break_point {
                 self.running = false;
                 break;
@@ -305,6 +293,15 @@ impl EmuState {
         self.stdout.flush()?;
 
         Ok(())
+    }
+
+    fn clock_frame(&mut self) -> GameResult {
+        self.fractional_cycles += FRACT_CYCLES_PER_FRAME;
+        let cycles_to_add = self.fractional_cycles as u64;
+        self.fractional_cycles -= cycles_to_add as f64;
+        let cycle_count = WHOLE_CYCLES_PER_FRAME + cycles_to_add;
+
+        self.clock(cycle_count)
     }
 }
 impl EventHandler<GameError> for EmuState {
@@ -317,7 +314,7 @@ impl EventHandler<GameError> for EmuState {
                 graphics::set_window_title(
                     ctx,
                     &format!(
-                        "{} v{} - {:.1} fps - {}",
+                        "{} v{} - {:.2} fps - {}",
                         TITLE,
                         VERSION,
                         fps,
@@ -327,7 +324,7 @@ impl EventHandler<GameError> for EmuState {
             } else {
                 graphics::set_window_title(
                     ctx,
-                    &format!("{} v{} - {:.1} fps", TITLE, VERSION, fps),
+                    &format!("{} v{} - {:.2} fps", TITLE, VERSION, fps),
                 );
             }
         }
@@ -388,12 +385,7 @@ impl EventHandler<GameError> for EmuState {
         }
 
         if self.running {
-            self.fractional_cycles += FRACT_CYCLES_PER_FRAME;
-            let cycles_to_add = self.fractional_cycles as u64;
-            self.fractional_cycles -= cycles_to_add as f64;
-            let cycle_count = WHOLE_CYCLES_PER_FRAME + cycles_to_add;
-
-            self.clock(cycle_count)?;
+            self.clock_frame()?;
         }
 
         timer::yield_now();
@@ -403,7 +395,19 @@ impl EventHandler<GameError> for EmuState {
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
         graphics::clear(ctx, Color::BLACK);
 
-        // ToDo: VGA
+        let mut screen = Image::from_rgba8(
+            ctx,
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+            self.vga.framebuffer().pixel_data(),
+        )?;
+        screen.set_filter(FilterMode::Nearest);
+        screen.set_wrap(WrapMode::Clamp, WrapMode::Clamp);
+
+        let params = DrawParam::default()
+            .dest([0.0, 0.0])
+            .scale([SCREEN_SCALE, SCREEN_SCALE]);
+        graphics::draw(ctx, &screen, params)?;
 
         if self.show_debug_info {
             const TEXT_SCALE: PxScale = PxScale { x: 20.0, y: 20.0 };
@@ -455,6 +459,17 @@ impl EventHandler<GameError> for EmuState {
                     }
                 }
             }
+            KeyCode::F => {
+                if !self.running {
+                    if let Err(_) = self.clock_frame() {
+                        ggez::event::quit(ctx);
+                    }
+                }
+            }
+            KeyCode::R => {
+                self.running = false;
+                self.reset();
+            }
             _ => {}
         }
     }
@@ -478,10 +493,13 @@ impl EventHandler<GameError> for EmuState {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_setup = WindowSetup::default()
         .title(&format!("{} v{}", TITLE, VERSION))
-        .vsync(true)
+        .vsync(false)
         .srgb(true)
         .samples(NumSamples::One);
-    let window_mode = WindowMode::default().dimensions(800.0, 600.0);
+    let window_mode = WindowMode::default().dimensions(
+        (SCREEN_WIDTH as f32) * SCREEN_SCALE,
+        (SCREEN_HEIGHT as f32) * SCREEN_SCALE,
+    );
     let builder = ContextBuilder::new(TITLE, AUTHOR)
         .window_setup(window_setup)
         .window_mode(window_mode);

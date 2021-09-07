@@ -378,7 +378,7 @@ impl Cpu {
     }
 
     // Returns true if the load operation was a memory read
-    fn load(&self, memory: &Memory, source: LoadSource) -> (bool, Byte) {
+    fn load(&self, memory: &Memory, vga: &Vga, source: LoadSource) -> (bool, Byte) {
         match source {
             LoadSource::Constant => (false, self.constant),
             LoadSource::Gpr(index) => (false, self.gpr[index]),
@@ -386,19 +386,25 @@ impl Cpu {
             LoadSource::TransferHigh => (false, self.transfer.high()),
             LoadSource::SprIndirect(index) => {
                 let addr = self.spr[index];
-                let value = memory.read(addr.into());
+                let value = memory.read(vga, addr.into());
                 (true, value.into())
             }
             LoadSource::TransferIndirect => {
                 let addr = self.transfer;
-                let value = memory.read(addr.into());
+                let value = memory.read(vga, addr.into());
                 (true, value.into())
             }
         }
     }
 
     // Returns true if the store operation was a memory write
-    fn store(&mut self, memory: &mut Memory, target: StoreTarget, value: Byte) -> bool {
+    fn store(
+        &mut self,
+        memory: &mut Memory,
+        vga: &mut Vga,
+        target: StoreTarget,
+        value: Byte,
+    ) -> bool {
         match target {
             StoreTarget::Gpr(index) => {
                 self.gpr[index] = value;
@@ -414,12 +420,12 @@ impl Cpu {
             }
             StoreTarget::SprIndirect(index) => {
                 let addr = self.spr[index];
-                memory.write(addr.into(), value.into());
+                memory.write(vga, addr.into(), value.into());
                 true
             }
             StoreTarget::TransferIndirect => {
                 let addr = self.transfer;
-                memory.write(addr.into(), value.into());
+                memory.write(vga, addr.into(), value.into());
                 true
             }
         }
@@ -566,13 +572,13 @@ impl Cpu {
 
         match self.stage2_instruction {
             Instruction::Mov(source, target) => {
-                let (mem_read, value) = self.load(memory, source);
+                let (mem_read, value) = self.load(memory, vga, source);
                 if mem_read {
                     // This is a memory read cycle so we have to supress fetch and PC increment.
                     fetch_stage2 = false;
                 }
 
-                let mem_write = self.store(memory, target, value);
+                let mem_write = self.store(memory, vga, target, value);
                 if mem_write {
                     // This is a memory write cycle so we have to supress fetch and PC increment.
                     fetch_stage2 = false;
@@ -657,14 +663,14 @@ impl Cpu {
                     StackTarget::TransferLow => self.transfer.low(),
                     StackTarget::TransferHigh => self.transfer.high(),
                 };
-                memory.write(addr.into(), value.into());
+                memory.write(vga, addr.into(), value.into());
 
                 // This is a memory write cycle so we have to supress fetch and PC increment.
                 fetch_stage2 = false;
             }
             Instruction::Pop(target) => {
                 let addr = self.spr[SPR_STACK_POINTER];
-                let value = memory.read(addr.into());
+                let value = memory.read(vga, addr.into());
                 match target {
                     StackTarget::Gpr(index) => self.gpr[index] = value.into(),
                     StackTarget::TransferLow => self.transfer.set_low(value.into()),
@@ -709,7 +715,7 @@ impl Cpu {
             Instruction::Break => break_point = true,
             Instruction::Lodsb => {
                 let addr = self.spr[SPR_SOURCE_INDEX];
-                let value = memory.read(addr.into());
+                let value = memory.read(vga, addr.into());
                 self.gpr[GPR_A] = value.into();
 
                 // This is a memory read cycle so we have to supress fetch and PC increment.
@@ -720,7 +726,7 @@ impl Cpu {
             Instruction::Stosb => {
                 let value = self.gpr[GPR_A];
                 let addr = self.spr[SPR_DESTINATION_INDEX];
-                memory.write(addr.into(), value.into());
+                memory.write(vga, addr.into(), value.into());
 
                 // This is a memory write cycle so we have to supress fetch and PC increment.
                 fetch_stage2 = false;
@@ -742,7 +748,7 @@ impl Cpu {
 
         // If stage 2 has supressed the fetch, this data is invalid,
         // but we read it regardless for simplicity.
-        let mem_data = memory.read(self.spr[SPR_PROGRAM_COUNTER].into());
+        let mem_data = memory.read(vga, self.spr[SPR_PROGRAM_COUNTER].into());
 
         match self.stage1_instruction {
             Instruction::Mov(source, _) => {
