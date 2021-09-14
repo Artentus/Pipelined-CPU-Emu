@@ -329,6 +329,7 @@ pub struct Vga {
     v_pixel: u16,
     h_offset: Word,
     v_offset: Word,
+    update_vscroll: bool,
 }
 impl Vga {
     #[inline]
@@ -341,6 +342,7 @@ impl Vga {
             v_pixel: 0,
             h_offset: Word::ZERO,
             v_offset: Word::ZERO,
+            update_vscroll: false,
         }
     }
 
@@ -352,6 +354,7 @@ impl Vga {
         self.v_pixel = 0;
         self.h_offset = Word::ZERO;
         self.v_offset = Word::ZERO;
+        self.update_vscroll = false;
     }
 
     #[inline]
@@ -443,11 +446,16 @@ impl Vga {
                 self.h_pixel = self.h_offset.into();
 
                 self.v_counter += 1;
-                self.v_pixel += 1;
+                if self.update_vscroll {
+                    self.v_pixel = self.v_offset.into();
+                } else {
+                    self.v_pixel += 1;
+                }
 
                 if self.v_counter == V_PIXELS {
                     self.v_counter = 0;
                     self.v_pixel = self.v_offset.into();
+                    self.update_vscroll = false;
                 }
             }
 
