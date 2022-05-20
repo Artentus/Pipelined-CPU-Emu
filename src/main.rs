@@ -30,7 +30,7 @@ const TITLE: &str = "Pipelined CPU Emu";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
 
-const CLOCK_RATE: f64 = 1_000_000.0; // 1 MHz
+const CLOCK_RATE: f64 = 4_000_000.0; // 4 MHz
 const FRAME_RATE: f64 = 59.94047619047765; // Actual VGA 60 Hz frequency
 const CYCLES_PER_FRAME: f64 = CLOCK_RATE / FRAME_RATE;
 const WHOLE_CYCLES_PER_FRAME: u64 = CYCLES_PER_FRAME as u64;
