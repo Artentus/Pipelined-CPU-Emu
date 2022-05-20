@@ -174,7 +174,8 @@ struct EmuState {
 impl EmuState {
     pub fn create(font: Font, sample_buffer: Arc<SegQueue<f32>>) -> GameResult<Self> {
         //const ROM_BYTES: &[u8] = include_bytes!("../res/snek.bin");
-        const ROM_BYTES: &[u8] = include_bytes!("../res/rom.bin");
+        //const ROM_BYTES: &[u8] = include_bytes!("../res/rom.bin");
+        const ROM_BYTES: &[u8] = include_bytes!("../res/Mandlebrot.bin");
 
         terminal::enable_raw_mode()?;
 

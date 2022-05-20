@@ -820,13 +820,13 @@ impl Cpu {
                 }
             }
             Instruction::Jna(target) => {
-                if self.flags[FLAG_CARRY] || self.flags[FLAG_ZERO] {
+                if !self.flags[FLAG_CARRY] || self.flags[FLAG_ZERO] {
                     self.jump_to(target);
                     jump = true;
                 }
             }
             Instruction::Ja(target) => {
-                if !self.flags[FLAG_CARRY] && !self.flags[FLAG_ZERO] {
+                if self.flags[FLAG_CARRY] && !self.flags[FLAG_ZERO] {
                     self.jump_to(target);
                     jump = true;
                 }
