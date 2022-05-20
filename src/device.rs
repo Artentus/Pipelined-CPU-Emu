@@ -1,7 +1,7 @@
 use crate::{Word, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub struct Memory {
-    data: Box<[u8; 0x10000]>,
+    data: Box<[u8]>,
     vga_conflict_data: Option<u8>,
 }
 impl Memory {
@@ -18,19 +18,17 @@ impl Memory {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
-            data: Box::new([0; 0x10000]),
+            data: unsafe { Box::new_zeroed_slice(0x10000).assume_init() },
             vga_conflict_data: None,
         }
     }
 
-    pub fn from_rom(rom: &[u8]) -> Self {
-        let mut data = [0; 0x10000];
-        data[0..rom.len()].copy_from_slice(rom);
+    pub fn init_region(&mut self, data: &[u8], addr: u16) {
+        let start = addr as usize;
+        let end = start + data.len();
+        assert!(end <= 0x10000);
 
-        Self {
-            data: Box::new(data),
-            vga_conflict_data: None,
-        }
+        self.data[start..end].copy_from_slice(data);
     }
 
     pub fn read(&self, vga: &Vga, addr: u16) -> u8 {

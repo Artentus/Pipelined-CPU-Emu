@@ -1,4 +1,4 @@
-#![feature(const_panic)]
+#![feature(new_uninit)]
 
 mod cpu;
 mod device;
@@ -173,10 +173,6 @@ struct EmuState {
 }
 impl EmuState {
     pub fn create(font: Font, sample_buffer: Arc<SegQueue<f32>>) -> GameResult<Self> {
-        //const ROM_BYTES: &[u8] = include_bytes!("../res/snek.bin");
-        //const ROM_BYTES: &[u8] = include_bytes!("../res/rom.bin");
-        const ROM_BYTES: &[u8] = include_bytes!("../res/Mandlebrot.bin");
-
         terminal::enable_raw_mode()?;
 
         let mut stdout = std::io::stdout();
@@ -185,9 +181,13 @@ impl EmuState {
         stdout.execute(terminal::Clear(terminal::ClearType::Purge))?;
         stdout.execute(cursor::MoveTo(0, 0))?;
 
+        const STUB_BYTES: &[u8] = include_bytes!("../res/StubLoad.bin");
+        let mut memory = Memory::new();
+        memory.init_region(STUB_BYTES, 0);
+
         Ok(Self {
             cpu: Cpu::new(),
-            memory: Memory::from_rom(ROM_BYTES),
+            memory,
             lcd: Lcd::new(),
             uart: Uart::new(),
             audio: Audio::new(),
@@ -337,30 +337,33 @@ impl EventHandler<GameError> for EmuState {
 
                 match key_event.code {
                     crossterm::event::KeyCode::Backspace => {}
-                    crossterm::event::KeyCode::Enter => {}
+                    crossterm::event::KeyCode::Enter => {
+                        self.input_queue.push_back(b'\r');
+                        self.input_queue.push_back(b'\n');
+                    }
                     crossterm::event::KeyCode::Left => {
                         self.input_queue.push_back(ESC_SEQ[0]);
                         self.input_queue.push_back(ESC_SEQ[1]);
-                        self.input_queue.push_back(31); // ASCII 1
-                        self.input_queue.push_back(68); // ASCII D
+                        self.input_queue.push_back(b'1');
+                        self.input_queue.push_back(b'D');
                     }
                     crossterm::event::KeyCode::Right => {
                         self.input_queue.push_back(ESC_SEQ[0]);
                         self.input_queue.push_back(ESC_SEQ[1]);
-                        self.input_queue.push_back(31); // ASCII 1
-                        self.input_queue.push_back(67); // ASCII C
+                        self.input_queue.push_back(b'1');
+                        self.input_queue.push_back(b'C');
                     }
                     crossterm::event::KeyCode::Up => {
                         self.input_queue.push_back(ESC_SEQ[0]);
                         self.input_queue.push_back(ESC_SEQ[1]);
-                        self.input_queue.push_back(31); // ASCII 1
-                        self.input_queue.push_back(65); // ASCII A
+                        self.input_queue.push_back(b'1');
+                        self.input_queue.push_back(b'A');
                     }
                     crossterm::event::KeyCode::Down => {
                         self.input_queue.push_back(ESC_SEQ[0]);
                         self.input_queue.push_back(ESC_SEQ[1]);
-                        self.input_queue.push_back(31); // ASCII 1
-                        self.input_queue.push_back(66); // ASCII B
+                        self.input_queue.push_back(b'1');
+                        self.input_queue.push_back(b'B');
                     }
                     crossterm::event::KeyCode::Home => {}
                     crossterm::event::KeyCode::End => {}
@@ -470,6 +473,25 @@ impl EventHandler<GameError> for EmuState {
             KeyCode::R => {
                 self.running = false;
                 self.reset();
+            }
+            KeyCode::O => {
+                if !self.running {
+                    let dialog = rfd::FileDialog::new().add_filter("Binary files", &["bin"]);
+                    if let Some(path) = dialog.pick_file() {
+                        match std::fs::read(path) {
+                            Ok(data) => {
+                                if data.len() <= 0xE000 {
+                                    self.memory.init_region(&data, 0);
+                                } else {
+                                    // TODO:
+                                }
+                            }
+                            Err(err) => {
+                                // TODO:
+                            }
+                        }
+                    }
+                }
             }
             _ => {}
         }
