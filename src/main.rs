@@ -344,7 +344,7 @@ impl EventHandler<GameError> for EmuState {
                     crossterm::event::KeyCode::Backspace => {}
                     crossterm::event::KeyCode::Enter => {
                         self.input_queue.push_back(b'\r');
-                        self.input_queue.push_back(b'\n');
+                        //self.input_queue.push_back(b'\n');
                     }
                     crossterm::event::KeyCode::Left => {
                         self.input_queue.push_back(ESC_SEQ[0]);
@@ -423,7 +423,12 @@ impl EventHandler<GameError> for EmuState {
             const TEXT_BACK_COLOR: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
             const TEXT_FRONT_COLOR: graphics::Color = graphics::Color::new(0.5, 1.0, 0.0, 1.0);
 
-            let cpu_info = format!("{}", self.cpu);
+            let cpu_info = format!(
+                "{}\n\n\nVGA h-offset: {}\nVGA v-offset: {}",
+                self.cpu,
+                self.vga.h_offset(),
+                self.vga.v_offset()
+            );
             let cpu_info_frag = TextFragment::new(cpu_info)
                 .font(self.font)
                 .scale(TEXT_SCALE);

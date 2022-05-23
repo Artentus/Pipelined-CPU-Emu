@@ -7,8 +7,8 @@ pub struct Memory {
 impl Memory {
     const MAP_RANGE_START: u16 = 0x8B00;
     const MAP_RANGE_END: u16 = 0x8C00;
-    const VGA_RANGE_START: u16 = 0x8B00;
-    const VGA_RANGE_END: u16 = 0x8B04;
+    const VGA_RANGE_START: u16 = 0x8B80;
+    const VGA_RANGE_END: u16 = 0x8B84;
 
     const FRAMEBUFFER_START: u16 = 0xC000;
     const FRAMEBUFFER_END: u16 = 0xE000;
@@ -360,6 +360,16 @@ impl Vga {
         &self.buffer
     }
 
+    #[inline]
+    pub fn h_offset(&self) -> u16 {
+        self.h_offset.into()
+    }
+
+    #[inline]
+    pub fn v_offset(&self) -> u16 {
+        self.v_offset.into()
+    }
+
     pub fn read_data(&self) -> u8 {
         const H_SYNC_START: u16 = SCREEN_WIDTH + 16; // Start of horizontal sync (inclusive)
         const H_SYNC_END: u16 = H_SYNC_START + 96; // End of horizontal sync (exclusive)
@@ -426,7 +436,10 @@ impl Vga {
             0 => self.h_offset.set_low(value.into()),
             1 => self.h_offset.set_high(value.into()),
             2 => self.v_offset.set_low(value.into()),
-            3 => self.v_offset.set_high(value.into()),
+            3 => {
+                self.v_offset.set_high(value.into());
+                self.update_vscroll = true;
+            }
             _ => {}
         }
     }
