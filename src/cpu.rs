@@ -369,8 +369,8 @@ impl Cpu {
     }
 
     #[inline]
-    pub fn reset(&mut self) {
-        self.spr[SPR_PROGRAM_COUNTER] = PROGRAM_COUNTER_INIT;
+    pub fn reset(&mut self, pc: u16) {
+        self.spr[SPR_PROGRAM_COUNTER] = Word::new(pc);
         self.spr[SPR_STACK_POINTER] = STACK_POINTER_INIT;
         self.stage0_instruction = Instruction::Nop;
         self.stage1_instruction = Instruction::Nop;
@@ -1491,7 +1491,7 @@ pub fn test_code(
     expected_state: CpuState,
 ) {
     let mut cpu = Cpu::new();
-    cpu.reset();
+    cpu.reset(0);
 
     cpu.transfer = initial_state.transfer;
     cpu.spr = [

@@ -50,6 +50,8 @@ const SCREEN_WIDTH: u16 = 640;
 const SCREEN_HEIGHT: u16 = 480;
 const SCREEN_SCALE: f32 = 2.0;
 
+const CPU_RESET_PC: u16 = 0xE000;
+
 fn format_clock_rate(clock_rate: f64) -> String {
     if clock_rate > 999_000_000.0 {
         format!("{:.1} GHz", clock_rate / 1_000_000_000.0)
@@ -181,12 +183,15 @@ impl EmuState {
         stdout.execute(terminal::Clear(terminal::ClearType::Purge))?;
         stdout.execute(cursor::MoveTo(0, 0))?;
 
-        const STUB_BYTES: &[u8] = include_bytes!("../res/StubLoad.bin");
+        const MONITOR_BYTES: &[u8] = include_bytes!("../res/Monitor.bin");
         let mut memory = Memory::new();
-        memory.init_region(STUB_BYTES, 0);
+        memory.init_region(MONITOR_BYTES, CPU_RESET_PC);
+
+        let mut cpu = Cpu::new();
+        cpu.reset(CPU_RESET_PC);
 
         Ok(Self {
-            cpu: Cpu::new(),
+            cpu,
             memory,
             lcd: Lcd::new(),
             uart: Uart::new(),
@@ -217,7 +222,7 @@ impl EmuState {
 
     #[inline]
     pub fn reset(&mut self) {
-        self.cpu.reset();
+        self.cpu.reset(CPU_RESET_PC);
         self.vga.reset();
     }
 
