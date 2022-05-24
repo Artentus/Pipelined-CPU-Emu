@@ -21,7 +21,7 @@ use crossterm::{ExecutableCommand, QueueableCommand};
 use ggez::conf::{NumSamples, WindowMode, WindowSetup};
 use ggez::event::{EventHandler, KeyCode, KeyMods};
 use ggez::graphics::{
-    Color, DrawParam, FilterMode, Font, Image, PxScale, Text, TextFragment, WrapMode,
+    Color, DrawParam, FilterMode, Font, Image, PxScale, Rect, Text, TextFragment, WrapMode,
 };
 use ggez::{event, graphics, timer, Context, ContextBuilder, GameError, GameResult};
 use spin_sleep::LoopHelper;
@@ -30,27 +30,19 @@ const TITLE: &str = "Pipelined CPU Emu";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
 
-const CLOCK_RATE: f64 = 4_000_000.0; // 4 MHz
+const INITIAL_CLOCK_RATE: f64 = 4_000_000.0; // 4 MHz
 const FRAME_RATE: f64 = 59.94047619047765; // Actual VGA 60 Hz frequency
-const CYCLES_PER_FRAME: f64 = CLOCK_RATE / FRAME_RATE;
-const WHOLE_CYCLES_PER_FRAME: u64 = CYCLES_PER_FRAME as u64;
-const FRACT_CYCLES_PER_FRAME: f64 = CYCLES_PER_FRAME - (WHOLE_CYCLES_PER_FRAME as f64);
+const CPU_RESET_PC: u16 = 0xE000;
 
 const UART_BAUD_RATE: f64 = 115_200.0; // 115.2 kHz
-const CYCLES_PER_BAUD: f64 = CLOCK_RATE / UART_BAUD_RATE;
 
 const AUDIO_CLOCK_RATE: f64 = 1_843_200.0 / 8.0; // 1.8432 MHz with fixed by 16 divider
-const AUDIO_CYCLES_PER_CPU_CYLCE: f64 = AUDIO_CLOCK_RATE / CLOCK_RATE;
 const SAMPLE_RATE: u32 = 44100;
 const AUDIO_CYCLES_PER_SAMPLE: f64 = AUDIO_CLOCK_RATE / (SAMPLE_RATE as f64);
 
 const VGA_CLOCK_RATE: f64 = 25_175_000.0; // 25.175 MHz
-const VGA_CYCLES_PER_CPU_CYCLE: f64 = VGA_CLOCK_RATE / CLOCK_RATE;
 const SCREEN_WIDTH: u16 = 640;
 const SCREEN_HEIGHT: u16 = 480;
-const SCREEN_SCALE: f32 = 2.0;
-
-const CPU_RESET_PC: u16 = 0xE000;
 
 fn format_clock_rate(clock_rate: f64) -> String {
     if clock_rate > 999_000_000.0 {
@@ -172,6 +164,14 @@ struct EmuState {
 
     font: Font,
     show_debug_info: bool,
+
+    clock_rate: f64,
+    cycles_per_frame: f64,
+    whole_cycles_per_frame: u64,
+    fract_cycles_per_frame: f64,
+    cycles_per_baud: f64,
+    audio_cycles_per_cpu_cylce: f64,
+    vga_cycles_per_cpu_cycle: f64,
 }
 impl EmuState {
     pub fn create(font: Font, sample_buffer: Arc<SegQueue<f32>>) -> GameResult<Self> {
@@ -189,6 +189,14 @@ impl EmuState {
 
         let mut cpu = Cpu::new();
         cpu.reset(CPU_RESET_PC);
+
+        let clock_rate = INITIAL_CLOCK_RATE;
+        let cycles_per_frame = clock_rate / FRAME_RATE;
+        let whole_cycles_per_frame = cycles_per_frame as u64;
+        let fract_cycles_per_frame = cycles_per_frame - (whole_cycles_per_frame as f64);
+        let cycles_per_baud = clock_rate / UART_BAUD_RATE;
+        let audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / clock_rate;
+        let vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / clock_rate;
 
         Ok(Self {
             cpu,
@@ -217,6 +225,14 @@ impl EmuState {
 
             font,
             show_debug_info: true,
+
+            clock_rate,
+            cycles_per_frame,
+            whole_cycles_per_frame,
+            fract_cycles_per_frame,
+            cycles_per_baud,
+            audio_cycles_per_cpu_cylce,
+            vga_cycles_per_cpu_cycle,
         })
     }
 
@@ -257,8 +273,8 @@ impl EmuState {
             );
 
             self.baud_cycles += 1.0;
-            while self.baud_cycles >= CYCLES_PER_BAUD {
-                self.baud_cycles -= CYCLES_PER_BAUD;
+            while self.baud_cycles >= self.cycles_per_baud {
+                self.baud_cycles -= self.cycles_per_baud;
 
                 if let Some(data) = self.uart.host_read() {
                     self.output_queue.push_back(data);
@@ -269,7 +285,7 @@ impl EmuState {
                 }
             }
 
-            self.fractional_audio_cycles += AUDIO_CYCLES_PER_CPU_CYLCE;
+            self.fractional_audio_cycles += self.audio_cycles_per_cpu_cylce;
             let whole_audio_cycles = self.fractional_audio_cycles as u32;
             self.fractional_audio_cycles -= whole_audio_cycles as f64;
 
@@ -283,7 +299,7 @@ impl EmuState {
                 }
             }
 
-            self.vga_cycles += VGA_CYCLES_PER_CPU_CYCLE;
+            self.vga_cycles += self.vga_cycles_per_cpu_cycle;
             let whole_vga_cycles = self.vga_cycles as u32;
             self.vga_cycles -= whole_vga_cycles as f64;
             self.vga.clock(&mut self.memory, whole_vga_cycles);
@@ -302,12 +318,87 @@ impl EmuState {
     }
 
     fn clock_frame(&mut self) -> GameResult {
-        self.fractional_cycles += FRACT_CYCLES_PER_FRAME;
+        self.fractional_cycles += self.fract_cycles_per_frame;
         let cycles_to_add = self.fractional_cycles as u64;
         self.fractional_cycles -= cycles_to_add as f64;
-        let cycle_count = WHOLE_CYCLES_PER_FRAME + cycles_to_add;
+        let cycle_count = self.whole_cycles_per_frame + cycles_to_add;
 
         self.clock(cycle_count)
+    }
+
+    fn draw_screen(&self, ctx: &mut Context) -> GameResult {
+        let (window_width, window_height) = graphics::drawable_size(ctx);
+        let (scale_x, scale_y) = (
+            window_width / (SCREEN_WIDTH as f32),
+            window_height / (SCREEN_HEIGHT as f32),
+        );
+        let mut scale = f32::min(scale_x, scale_y);
+        if scale > 1.0 {
+            scale = scale.floor();
+        }
+
+        let (draw_width, draw_height) = (
+            (SCREEN_WIDTH as f32) * scale,
+            (SCREEN_HEIGHT as f32) * scale,
+        );
+        let filter =
+            if (draw_width < (SCREEN_WIDTH as f32)) || (draw_height < (SCREEN_HEIGHT as f32)) {
+                FilterMode::Linear
+            } else {
+                FilterMode::Nearest
+            };
+
+        let mut screen = Image::from_rgba8(
+            ctx,
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+            self.vga.framebuffer().pixel_data(),
+        )?;
+        screen.set_filter(filter);
+        screen.set_wrap(WrapMode::Clamp, WrapMode::Clamp);
+
+        let params = DrawParam::default()
+            .dest([
+                (window_width - draw_width) / 2.0,
+                (window_height - draw_height) / 2.0,
+            ])
+            .scale([scale, scale]);
+        graphics::draw(ctx, &screen, params)?;
+
+        Ok(())
+    }
+
+    fn draw_debug_info(&self, ctx: &mut Context) -> GameResult {
+        const TEXT_SCALE: PxScale = PxScale { x: 20.0, y: 20.0 };
+        const TEXT_BACK_COLOR: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
+        const TEXT_FRONT_COLOR: graphics::Color = graphics::Color::new(0.5, 1.0, 0.0, 1.0);
+
+        let cpu_info = format!(
+            "{}\n\n\nVGA h-offset: {}\nVGA v-offset: {}",
+            self.cpu,
+            self.vga.h_offset(),
+            self.vga.v_offset()
+        );
+        let cpu_info_frag = TextFragment::new(cpu_info)
+            .font(self.font)
+            .scale(TEXT_SCALE);
+        let cpu_info_text = Text::new(cpu_info_frag);
+        graphics::draw(
+            ctx,
+            &cpu_info_text,
+            DrawParam::default()
+                .dest([11.0, 9.0])
+                .color(TEXT_BACK_COLOR),
+        )?;
+        graphics::draw(
+            ctx,
+            &cpu_info_text,
+            DrawParam::default()
+                .dest([10.0, 8.0])
+                .color(TEXT_FRONT_COLOR),
+        )?;
+
+        Ok(())
     }
 }
 impl EventHandler<GameError> for EmuState {
@@ -324,7 +415,7 @@ impl EventHandler<GameError> for EmuState {
                         TITLE,
                         VERSION,
                         fps,
-                        format_clock_rate(fps * CYCLES_PER_FRAME)
+                        format_clock_rate(fps * self.cycles_per_frame)
                     ),
                 );
             } else {
@@ -403,56 +494,28 @@ impl EventHandler<GameError> for EmuState {
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
         graphics::clear(ctx, Color::BLACK);
-
-        let mut screen = Image::from_rgba8(
-            ctx,
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
-            self.vga.framebuffer().pixel_data(),
-        )?;
-        screen.set_filter(FilterMode::Nearest);
-        screen.set_wrap(WrapMode::Clamp, WrapMode::Clamp);
-
-        let params = DrawParam::default()
-            .dest([0.0, 0.0])
-            .scale([SCREEN_SCALE, SCREEN_SCALE]);
-        graphics::draw(ctx, &screen, params)?;
+        self.draw_screen(ctx);
 
         if self.show_debug_info {
-            const TEXT_SCALE: PxScale = PxScale { x: 20.0, y: 20.0 };
-            const TEXT_BACK_COLOR: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
-            const TEXT_FRONT_COLOR: graphics::Color = graphics::Color::new(0.5, 1.0, 0.0, 1.0);
-
-            let cpu_info = format!(
-                "{}\n\n\nVGA h-offset: {}\nVGA v-offset: {}",
-                self.cpu,
-                self.vga.h_offset(),
-                self.vga.v_offset()
-            );
-            let cpu_info_frag = TextFragment::new(cpu_info)
-                .font(self.font)
-                .scale(TEXT_SCALE);
-            let cpu_info_text = Text::new(cpu_info_frag);
-            graphics::draw(
-                ctx,
-                &cpu_info_text,
-                DrawParam::default()
-                    .dest([11.0, 9.0])
-                    .color(TEXT_BACK_COLOR),
-            )?;
-            graphics::draw(
-                ctx,
-                &cpu_info_text,
-                DrawParam::default()
-                    .dest([10.0, 8.0])
-                    .color(TEXT_FRONT_COLOR),
-            )?;
+            self.draw_debug_info(ctx)?;
         }
 
         graphics::present(ctx)?;
         timer::yield_now();
 
         Ok(())
+    }
+
+    fn resize_event(&mut self, ctx: &mut Context, width: f32, height: f32) {
+        graphics::set_screen_coordinates(
+            ctx,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: width,
+                h: height,
+            },
+        );
     }
 
     fn key_down_event(
@@ -503,6 +566,30 @@ impl EventHandler<GameError> for EmuState {
                     }
                 }
             }
+            KeyCode::NumpadAdd => {
+                if self.clock_rate < 64_000_000.0 {
+                    self.clock_rate *= 2.0;
+                    self.cycles_per_frame = self.clock_rate / FRAME_RATE;
+                    self.whole_cycles_per_frame = self.cycles_per_frame as u64;
+                    self.fract_cycles_per_frame =
+                        self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
+                    self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
+                    self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
+                    self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
+                }
+            }
+            KeyCode::NumpadSubtract => {
+                if self.clock_rate > 1_000.0 {
+                    self.clock_rate /= 2.0;
+                    self.cycles_per_frame = self.clock_rate / FRAME_RATE;
+                    self.whole_cycles_per_frame = self.cycles_per_frame as u64;
+                    self.fract_cycles_per_frame =
+                        self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
+                    self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
+                    self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
+                    self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
+                }
+            }
             _ => {}
         }
     }
@@ -529,10 +616,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .vsync(false)
         .srgb(true)
         .samples(NumSamples::One);
-    let window_mode = WindowMode::default().dimensions(
-        (SCREEN_WIDTH as f32) * SCREEN_SCALE,
-        (SCREEN_HEIGHT as f32) * SCREEN_SCALE,
-    );
+    let window_mode = WindowMode::default()
+        .resizable(true)
+        .dimensions(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32);
     let builder = ContextBuilder::new(TITLE, AUTHOR)
         .window_setup(window_setup)
         .window_mode(window_mode);
