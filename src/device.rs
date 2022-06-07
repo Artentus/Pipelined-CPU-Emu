@@ -89,17 +89,13 @@ impl Lcd {
         Self {}
     }
 
-    pub fn write_cmd(&mut self, value: u8) {
-        todo!();
-    }
+    pub fn write_cmd(&mut self, _value: u8) {}
 
     pub fn read_data(&mut self) -> u8 {
-        todo!();
+        0
     }
 
-    pub fn write_data(&mut self, value: u8) {
-        todo!();
-    }
+    pub fn write_data(&mut self, _value: u8) {}
 }
 
 struct Queue<T, const N: usize> {
@@ -204,66 +200,117 @@ impl Uart {
     }
 }
 
+struct SquareWaveChannel {
+    volume: f32,
+    frequency: u16,
+    counter: u16,
+    state: f32,
+}
+impl SquareWaveChannel {
+    #[inline]
+    const fn new() -> Self {
+        Self {
+            volume: 0.0,
+            frequency: 0,
+            counter: 0,
+            state: 1.0,
+        }
+    }
+
+    fn write(&mut self, data: u16) {
+        self.volume = 1.0 - (((data >> 12) as f32) / (0xF as f32));
+        self.frequency = data & 0x0FFF;
+    }
+
+    fn clock(&mut self) -> f32 {
+        if self.counter == 0 {
+            self.counter = self.frequency.max(1);
+            self.state = -self.state;
+        }
+
+        self.counter -= 1;
+
+        self.state * self.volume
+    }
+}
+
+enum AudioWriteCycleState {
+    ChannelSelect,
+    LowData,
+    HighData,
+}
+
 pub struct Audio {
-    shift_data: u32,
-    latched_data: u32,
-    counter1: u16,
-    counter2: u16,
-    channel1: bool,
-    channel2: bool,
+    channel0: SquareWaveChannel,
+    channel1: SquareWaveChannel,
+    channel2: SquareWaveChannel,
+    channel3: SquareWaveChannel,
+
+    cycle_state: AudioWriteCycleState,
+    channel_index: u8,
+    low_data: u8,
 }
 impl Audio {
     #[inline]
     pub const fn new() -> Self {
         Self {
-            shift_data: 0,
-            latched_data: 0xF000F000,
-            counter1: 0,
-            counter2: 0,
-            channel1: false,
-            channel2: false,
+            channel0: SquareWaveChannel::new(),
+            channel1: SquareWaveChannel::new(),
+            channel2: SquareWaveChannel::new(),
+            channel3: SquareWaveChannel::new(),
+
+            cycle_state: AudioWriteCycleState::ChannelSelect,
+            channel_index: 0,
+            low_data: 0,
         }
     }
 
     #[inline]
     pub fn read_data(&mut self) -> u8 {
-        self.latched_data = self.shift_data;
-
         0
     }
 
     #[inline]
     pub fn write_data(&mut self, value: u8) {
-        self.shift_data = (self.shift_data << 8) | (value as u32);
+        let reset_cycle = (self.channel_index & 0x80) != 0;
+
+        match self.cycle_state {
+            AudioWriteCycleState::ChannelSelect => {
+                self.channel_index = value;
+                self.cycle_state = AudioWriteCycleState::LowData;
+            }
+            AudioWriteCycleState::LowData => {
+                self.low_data = value;
+                self.cycle_state = AudioWriteCycleState::HighData;
+            }
+            AudioWriteCycleState::HighData => {
+                let data = u16::from_le_bytes([self.low_data, value]);
+
+                match self.channel_index & 0x7F {
+                    0 => self.channel0.write(data),
+                    1 => self.channel1.write(data),
+                    2 => self.channel2.write(data),
+                    3 => self.channel3.write(data),
+                    _ => {}
+                }
+
+                self.cycle_state = AudioWriteCycleState::ChannelSelect;
+            }
+        }
+
+        if reset_cycle {
+            self.cycle_state = AudioWriteCycleState::ChannelSelect;
+        }
     }
 
     pub fn clock(&mut self) -> f32 {
-        let freq1 = ((self.latched_data & 0x00000FFF) >> 0) as u16;
-        let freq2 = ((self.latched_data & 0x0FFF0000) >> 16) as u16;
-        let vol1 = ((self.latched_data & 0x0000F000) >> 12) as u8;
-        let vol2 = ((self.latched_data & 0xF0000000) >> 28) as u8;
+        let v0 = self.channel0.clock();
+        let v1 = self.channel1.clock();
+        let v2 = self.channel2.clock();
+        let v3 = self.channel3.clock();
 
-        if self.counter1 == 0 {
-            self.counter1 = u16::max(freq1, 1);
-            self.channel1 = !self.channel1;
-        }
-
-        if self.counter2 == 0 {
-            self.counter2 = u16::max(freq2, 1);
-            self.channel2 = !self.channel2;
-        }
-
-        self.counter1 -= 1;
-        self.counter2 -= 1;
-
-        let norm_vol1 = ((0x0F - vol1) as f32) / 15.0;
-        let norm_vol2 = ((0x0F - vol2) as f32) / 15.0;
-
-        let val1 = if self.channel1 { 1.0 } else { 0.0 } * norm_vol1;
-        let val2 = if self.channel2 { 1.0 } else { 0.0 } * norm_vol2;
-
-        const MASTER_VOLUME: f32 = 0.05;
-        ((val1 + val2) * 2.0 - 1.0) * MASTER_VOLUME
+        const MASTER_VOLUME: f32 = 0.50;
+        (v0 + v1 + v2 + v3).tanh() * MASTER_VOLUME
     }
 }
 

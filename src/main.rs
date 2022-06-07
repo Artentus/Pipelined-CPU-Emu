@@ -494,7 +494,7 @@ impl EventHandler<GameError> for EmuState {
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
         graphics::clear(ctx, Color::BLACK);
-        self.draw_screen(ctx);
+        self.draw_screen(ctx)?;
 
         if self.show_debug_info {
             self.draw_debug_info(ctx)?;
@@ -515,7 +515,8 @@ impl EventHandler<GameError> for EmuState {
                 w: width,
                 h: height,
             },
-        );
+        )
+        .unwrap();
     }
 
     fn key_down_event(
@@ -556,11 +557,21 @@ impl EventHandler<GameError> for EmuState {
                                 if data.len() <= 0xE000 {
                                     self.memory.init_region(&data, 0);
                                 } else {
-                                    // TODO:
+                                    msgbox::create(
+                                        "Invalid binary file",
+                                        "The binary file is too big.",
+                                        msgbox::IconType::Error,
+                                    )
+                                    .unwrap();
                                 }
                             }
                             Err(err) => {
-                                // TODO:
+                                msgbox::create(
+                                    "Error reading file",
+                                    &err.to_string(),
+                                    msgbox::IconType::Error,
+                                )
+                                .unwrap();
                             }
                         }
                     }

@@ -22,9 +22,6 @@ const FLAG_CARRY: usize = 2;
 const FLAG_LOGICAL_CARRY: usize = 3;
 const FLAG_SIGN: usize = 4;
 
-const PROGRAM_COUNTER_INIT: Word = Word::new(0x0000);
-const STACK_POINTER_INIT: Word = Word::new(0x0000);
-
 fn display_spr(f: &mut std::fmt::Formatter<'_>, index: usize) -> std::fmt::Result {
     match index {
         SPR_PROGRAM_COUNTER => write!(f, "pc"),
@@ -370,6 +367,8 @@ impl Cpu {
 
     #[inline]
     pub fn reset(&mut self, pc: u16) {
+        const STACK_POINTER_INIT: Word = Word::new(0x0000);
+
         self.spr[SPR_PROGRAM_COUNTER] = Word::new(pc);
         self.spr[SPR_STACK_POINTER] = STACK_POINTER_INIT;
         self.stage0_instruction = Instruction::Nop;
