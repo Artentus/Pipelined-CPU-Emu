@@ -91,7 +91,7 @@ impl Lcd {
 
     pub fn write_cmd(&mut self, _value: u8) {}
 
-    pub fn read_data(&mut self) -> u8 {
+    pub fn read_cmd(&mut self) -> u8 {
         0
     }
 
@@ -263,11 +263,6 @@ impl Audio {
             channel_index: 0,
             low_data: 0,
         }
-    }
-
-    #[inline]
-    pub fn read_data(&mut self) -> u8 {
-        0
     }
 
     #[inline]
@@ -465,9 +460,6 @@ impl Vga {
         result
     }
 
-    #[inline]
-    pub fn write_data(&mut self, _value: u8) {}
-
     pub fn read_mapped_io(&self, addr: u16) -> u8 {
         match addr {
             0 => self.h_offset.low().into(),
@@ -539,5 +531,81 @@ impl Vga {
                 );
             }
         }
+    }
+}
+
+// Follows the SNES layout
+pub enum ControlerButton {
+    A,
+    B,
+    X,
+    Y,
+    Up,
+    Down,
+    Left,
+    Right,
+    R,
+    L,
+    Start,
+    Select,
+}
+
+pub struct Controler {
+    low: u8,
+    high: u8,
+    state: bool,
+}
+impl Controler {
+    pub fn new() -> Self {
+        Self {
+            low: 0,
+            high: 0,
+            state: false,
+        }
+    }
+
+    pub fn host_button_down(&mut self, button: ControlerButton) {
+        match button {
+            ControlerButton::A => self.high |= 0x1,
+            ControlerButton::B => self.low |= 0x01,
+            ControlerButton::X => self.high |= 0x2,
+            ControlerButton::Y => self.low |= 0x02,
+            ControlerButton::Up => self.low |= 0x10,
+            ControlerButton::Down => self.low |= 0x20,
+            ControlerButton::Left => self.low |= 0x40,
+            ControlerButton::Right => self.low |= 0x80,
+            ControlerButton::R => self.high |= 0x8,
+            ControlerButton::L => self.high |= 0x4,
+            ControlerButton::Start => self.low |= 0x08,
+            ControlerButton::Select => self.low |= 0x04,
+        }
+    }
+
+    pub fn host_button_up(&mut self, button: ControlerButton) {
+        match button {
+            ControlerButton::A => self.high &= !0x1,
+            ControlerButton::B => self.low &= !0x01,
+            ControlerButton::X => self.high &= !0x2,
+            ControlerButton::Y => self.low &= !0x02,
+            ControlerButton::Up => self.low &= !0x10,
+            ControlerButton::Down => self.low &= !0x20,
+            ControlerButton::Left => self.low &= !0x40,
+            ControlerButton::Right => self.low &= !0x80,
+            ControlerButton::R => self.high &= !0x8,
+            ControlerButton::L => self.high &= !0x4,
+            ControlerButton::Start => self.low &= !0x08,
+            ControlerButton::Select => self.low &= !0x04,
+        }
+    }
+
+    pub fn read_data(&mut self) -> u8 {
+        let result = if state {
+            self.high | 0x80 // The msb of the high byte is pulled high to identify controller state
+        } else {
+            self.low
+        };
+
+        self.state = !self.state;
+        result
     }
 }

@@ -7,7 +7,7 @@ mod tests;
 mod types;
 
 use cpu::Cpu;
-use device::{Audio, Lcd, Memory, Uart, Vga};
+use device::{Audio, Controler, ControlerButton, Lcd, Memory, Uart, Vga};
 use types::*;
 
 use std::collections::VecDeque;
@@ -147,6 +147,7 @@ struct EmuState {
     uart: Uart,
     audio: Audio,
     vga: Vga,
+    controler: Controler,
 
     running: bool,
     fractional_cycles: f64,
@@ -205,6 +206,7 @@ impl EmuState {
             uart: Uart::new(),
             audio: Audio::new(),
             vga: Vga::new(),
+            controler: Controler::new(),
 
             running: false,
             fractional_cycles: 0.0,
@@ -270,6 +272,7 @@ impl EmuState {
                 &mut self.uart,
                 &mut self.audio,
                 &mut self.vga,
+                &mut self.controler,
             );
 
             self.baud_cycles += 1.0;
@@ -618,6 +621,53 @@ impl EventHandler<GameError> for EmuState {
         let _ = self.stdout.execute(cursor::Show);
 
         false
+    }
+
+    fn gamepad_button_down_event(
+        &mut self,
+        _ctx: &mut Context,
+        btn: event::Button,
+        _id: event::GamepadId,
+    ) {
+        if let Some(button) = map_button(btn) {
+            self.controler.host_button_down(button);
+        }
+    }
+
+    fn gamepad_button_up_event(
+        &mut self,
+        _ctx: &mut Context,
+        btn: event::Button,
+        _id: event::GamepadId,
+    ) {
+        if let Some(button) = map_button(btn) {
+            self.controler.host_button_up(button);
+        }
+    }
+}
+
+fn map_button(button: event::Button) -> ControlerButton {
+    match btn {
+        event::Button::South => Some(ControlerButton::B),
+        event::Button::East => Some(ControlerButton::A),
+        event::Button::North => Some(ControlerButton::X),
+        event::Button::West => Some(ControlerButton::Y),
+        event::Button::C => None,
+        event::Button::Z => None,
+        event::Button::LeftTrigger => Some(ControlerButton::L),
+        event::Button::LeftTrigger2 => None,
+        event::Button::RightTrigger => Some(ControlerButton::R),
+        event::Button::RightTrigger2 => None,
+        event::Button::Select => Some(ControlerButton::Select),
+        event::Button::Start => Some(ControlerButton::Start),
+        event::Button::Mode => None,
+        event::Button::LeftThumb => None,
+        event::Button::RightThumb => None,
+        event::Button::DPadUp => Some(ControlerButton::Up),
+        event::Button::DPadDown => Some(ControlerButton::Down),
+        event::Button::DPadLeft => Some(ControlerButton::Left),
+        event::Button::DPadRight => Some(ControlerButton::Right),
+        event::Button::Unknown => None,
     }
 }
 

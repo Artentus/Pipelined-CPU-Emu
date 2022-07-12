@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use crate::{Audio, Byte, Lcd, Memory, Uart, Vga, Word};
+use crate::{Audio, Byte, Controler, Lcd, Memory, Uart, Vga, Word};
 
 const SPR_COUNT: usize = 5;
 const SPR_PROGRAM_COUNTER: usize = 0;
@@ -182,6 +182,7 @@ enum IORegister {
     UartData,
     UartCtrl,
     AudioData,
+    CntrlData,
     VgaData,
 }
 impl Display for IORegister {
@@ -192,6 +193,7 @@ impl Display for IORegister {
             IORegister::UartData => write!(f, "uartData"),
             IORegister::UartCtrl => write!(f, "uartCtrl"),
             IORegister::AudioData => write!(f, "audioData"),
+            IORegister::CntrlData => write!(f, "cntrlData"),
             IORegister::VgaData => write!(f, "vgaData"),
         }
     }
@@ -203,6 +205,7 @@ enum Instruction {
     Mov(LoadSource, StoreTarget),
     MovWord(LoadWordSource, StoreWordTarget),
     IncWord(CountTarget),
+    InccWord(CountTarget),
     DecWord(CountTarget),
     Prebranch,
     Jmp(JumpTarget),
@@ -257,6 +260,7 @@ impl Display for Instruction {
             Instruction::Mov(source, target) => write!(f, "MOV {},{}", target, source),
             Instruction::MovWord(source, target) => write!(f, "MOV {},{}", target, source),
             Instruction::IncWord(target) => write!(f, "INC {}", target),
+            Instruction::InccWord(target) => write!(f, "INCC {}", target),
             Instruction::DecWord(target) => write!(f, "DEC {}", target),
             Instruction::Prebranch => write!(f, "PREBRANCH"),
             Instruction::Jmp(target) => write!(f, "JMP {}", target),
@@ -553,6 +557,7 @@ impl Cpu {
         uart: &mut Uart,
         audio: &mut Audio,
         vga: &mut Vga,
+        controler: &mut Controler,
     ) -> bool {
         // Move instruction stream forward
         self.stage2_instruction = self.stage1_instruction;
@@ -592,6 +597,13 @@ impl Cpu {
             }
             Instruction::IncWord(target) => match target {
                 CountTarget::Spr(index) => self.spr[index] += 1,
+            },
+            Instruction::IncWord(target) => match target {
+                CountTarget::Spr(index) => {
+                    if self.flags[FLAG_CARRY] {
+                        self.spr[index] += 1
+                    }
+                }
             },
             Instruction::Prebranch => {
                 // This is a dummy instruction emitted by the assembler to stop
@@ -694,16 +706,18 @@ impl Cpu {
                     IORegister::UartData => uart.write_data(value.into()),
                     IORegister::UartCtrl => unreachable!(), // Register is not writable, sanity check
                     IORegister::AudioData => audio.write_data(value.into()),
-                    IORegister::VgaData => vga.write_data(value.into()),
+                    IORegister::CntrlData => unreachable!(),
+                    IORegister::VgaData => unreachable!(),
                 }
             }
             Instruction::In(source, target) => {
                 let value = match source {
-                    IORegister::LcdCmd => unreachable!(), // Register is not readable, sanity check
-                    IORegister::LcdData => lcd.read_data(),
+                    IORegister::LcdCmd => lcd.read_cmd(),
+                    IORegister::LcdData => unreachable!(), // Register is not readable, sanity check
                     IORegister::UartData => uart.read_data(),
                     IORegister::UartCtrl => uart.read_ctrl(),
-                    IORegister::AudioData => audio.read_data(),
+                    IORegister::AudioData => unreachable!(),
+                    IORegister::CntrlData => controler.read_data(),
                     IORegister::VgaData => vga.read_data(),
                 };
 
@@ -1133,7 +1147,7 @@ fn decode_opcode(opcode: u8) -> Instruction {
         0x32 => Instruction::DecWord(CountTarget::Spr(SPR_SOURCE_INDEX)), // dec si
         0x33 => Instruction::DecWord(CountTarget::Spr(SPR_DESTINATION_INDEX)), // dec di
 
-        0x34 => Instruction::IncWord(CountTarget::Spr(SPR_STACK_POINTER)), // inc sp
+        0x34 => Instruction::InccWord(CountTarget::Spr(SPR_SOURCE_INDEX)), // incc si
         0x35 => Instruction::IncWord(CountTarget::Spr(SPR_SOURCE_INDEX)),  // inc si
         0x36 => Instruction::IncWord(CountTarget::Spr(SPR_DESTINATION_INDEX)), // inc di
 
@@ -1147,10 +1161,10 @@ fn decode_opcode(opcode: u8) -> Instruction {
         0x3B => Instruction::In(IORegister::UartCtrl, AluSource::Gpr(GPR_A)),  // in a,uartCtrl
 
         0x3C => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::AudioData), // out audioData,a
-        0x3D => Instruction::In(IORegister::AudioData, AluSource::Gpr(GPR_A)),  // in a,audioData
+        0x3D => Instruction::In(IORegister::CntrlData, AluSource::Gpr(GPR_A)),  // in a,cntrlData
 
-        0x30 => Instruction::Out(AluSource::Gpr(GPR_A), IORegister::VgaData), // out vgaData,a
-        0x31 => Instruction::In(IORegister::VgaData, AluSource::Gpr(GPR_A)),  // in a,vgaData
+        0x30 => Instruction::Nop, // unused
+        0x31 => Instruction::In(IORegister::VgaData, AluSource::Gpr(GPR_A)), // in a,vgaData
 
         0x3F => Instruction::Break, // break
 
@@ -1516,9 +1530,17 @@ pub fn test_code(
     let mut uart = Uart::new();
     let mut audio = Audio::new();
     let mut vga = Vga::new();
+    let mut controler = Controler::new();
 
     for _ in 0..cycle_count {
-        cpu.clock(memory, &mut lcd, &mut uart, &mut audio, &mut vga);
+        cpu.clock(
+            memory,
+            &mut lcd,
+            &mut uart,
+            &mut audio,
+            &mut vga,
+            &mut controler,
+        );
         uart.host_read();
     }
 
