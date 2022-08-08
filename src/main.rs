@@ -251,13 +251,11 @@ impl EmuState {
                     self.stdout.queue(style::Print(c))?;
                     self.partial_char = None;
                 }
+            } else if (data & 0x80) == 0 {
+                let c = char::from(data);
+                self.stdout.queue(style::Print(c))?;
             } else {
-                if (data & 0x80) == 0 {
-                    let c = char::from(data);
-                    self.stdout.queue(style::Print(c))?;
-                } else {
-                    self.partial_char = Some(Utf8Builder::new(data));
-                }
+                self.partial_char = Some(Utf8Builder::new(data));
             }
         }
 
@@ -646,8 +644,8 @@ impl EventHandler<GameError> for EmuState {
     }
 }
 
-fn map_button(button: event::Button) -> ControlerButton {
-    match btn {
+fn map_button(button: event::Button) -> Option<ControlerButton> {
+    match button {
         event::Button::South => Some(ControlerButton::B),
         event::Button::East => Some(ControlerButton::A),
         event::Button::North => Some(ControlerButton::X),

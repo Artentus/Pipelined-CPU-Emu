@@ -483,7 +483,7 @@ impl Cpu {
         let result_long = lhs_long + rhs_long + carry_add;
         let result = result_long.to_le_bytes()[0];
 
-        let mut new_flags = self.flags.clone();
+        let mut new_flags = self.flags;
         new_flags[FLAG_CARRY] = result_long > 0x00FF;
         new_flags[FLAG_ZERO] = result == 0x00;
         new_flags[FLAG_SIGN] = (result & 0x80) != 0;
@@ -544,9 +544,7 @@ impl Cpu {
     fn flip_pc_ra(&mut self) {
         // In hardware this is implemented with register renaming,
         // but in the emulator we just swap the values for simplicity.
-        let tmp = self.spr[SPR_PROGRAM_COUNTER];
-        self.spr[SPR_PROGRAM_COUNTER] = self.spr[SPR_RETURN_ADDRESS];
-        self.spr[SPR_RETURN_ADDRESS] = tmp;
+        self.spr.swap(SPR_PROGRAM_COUNTER, SPR_RETURN_ADDRESS);
     }
 
     // Returns true if a break instruction was reached
@@ -568,7 +566,7 @@ impl Cpu {
         let mut fetch_stage2 = true; // Wether we can fetch and increment the PC this cycle based on pipeline stage 2
         let mut jump = false;
 
-        let mut new_flags = self.flags.clone();
+        let mut new_flags = self.flags;
 
         //
         // --------------------- Stage 2 ---------------------
@@ -598,7 +596,7 @@ impl Cpu {
             Instruction::IncWord(target) => match target {
                 CountTarget::Spr(index) => self.spr[index] += 1,
             },
-            Instruction::IncWord(target) => match target {
+            Instruction::InccWord(target) => match target {
                 CountTarget::Spr(index) => {
                     if self.flags[FLAG_CARRY] {
                         self.spr[index] += 1
@@ -764,14 +762,12 @@ impl Cpu {
         let mem_data = memory.read(vga, self.spr[SPR_PROGRAM_COUNTER].into());
 
         match self.stage1_instruction {
-            Instruction::Mov(source, _) => {
-                if let LoadSource::Constant = source {
-                    self.constant = mem_data.into();
+            Instruction::Mov(LoadSource::Constant, _) => {
+                self.constant = mem_data.into();
 
-                    // The current memory data is a constant value belonging to the instruction,
-                    // so we have to supress the fetch during this cycle.
-                    fetch_stage1 = false;
-                }
+                // The current memory data is a constant value belonging to the instruction,
+                // so we have to supress the fetch during this cycle.
+                fetch_stage1 = false;
             }
             Instruction::MovWord(source, target) => {
                 let value = self.load_word(source);

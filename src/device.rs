@@ -599,7 +599,7 @@ impl Controler {
     }
 
     pub fn read_data(&mut self) -> u8 {
-        let result = if state {
+        let result = if self.state {
             self.high | 0x80 // The msb of the high byte is pulled high to identify controller state
         } else {
             self.low
