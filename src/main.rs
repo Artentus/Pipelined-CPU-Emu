@@ -3,8 +3,6 @@
 
 mod cpu;
 mod device;
-#[cfg(test)]
-mod tests;
 mod types;
 
 use cpu::Cpu;
