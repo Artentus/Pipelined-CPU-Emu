@@ -155,8 +155,8 @@ impl<T, const N: usize> Queue<T, N> {
 }
 
 pub struct Uart {
-    receive_fifo: Queue<u8, 8>,
-    transmit_fifo: Queue<u8, 8>,
+    receive_fifo: Queue<u8, 800>,
+    transmit_fifo: Queue<u8, 800>,
 }
 impl Uart {
     #[inline]

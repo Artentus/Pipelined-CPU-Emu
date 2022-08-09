@@ -1,4 +1,5 @@
 #![feature(new_uninit)]
+#![feature(bigint_helper_methods)]
 
 mod cpu;
 mod device;
@@ -264,14 +265,17 @@ impl EmuState {
 
     fn clock(&mut self, n: u64) -> GameResult {
         for _ in 0..n {
-            let break_point = self.cpu.clock(
-                &mut self.memory,
-                &mut self.lcd,
-                &mut self.uart,
-                &mut self.audio,
-                &mut self.vga,
-                &mut self.controler,
-            );
+            let break_point = self
+                .cpu
+                .clock(
+                    &mut self.memory,
+                    &mut self.lcd,
+                    &mut self.uart,
+                    &mut self.audio,
+                    &mut self.vga,
+                    &mut self.controler,
+                )
+                .expect("invalid instruction");
 
             self.baud_cycles += 1.0;
             while self.baud_cycles >= self.cycles_per_baud {
