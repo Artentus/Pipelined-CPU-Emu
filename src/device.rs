@@ -1,4 +1,4 @@
-use crate::{Word, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub struct Memory {
     data: Box<[u8]>,
@@ -155,8 +155,8 @@ impl<T, const N: usize> Queue<T, N> {
 }
 
 pub struct Uart {
-    receive_fifo: Queue<u8, 800>,
-    transmit_fifo: Queue<u8, 800>,
+    receive_fifo: Queue<u8, 8>,
+    transmit_fifo: Queue<u8, 8>,
 }
 impl Uart {
     #[inline]
@@ -367,8 +367,8 @@ pub struct Vga {
     v_counter: u16,
     h_pixel: u16,
     v_pixel: u16,
-    h_offset: Word,
-    v_offset: Word,
+    h_offset: u16,
+    v_offset: u16,
     update_vscroll: bool,
 }
 impl Vga {
@@ -380,8 +380,8 @@ impl Vga {
             v_counter: 0,
             h_pixel: 0,
             v_pixel: 0,
-            h_offset: Word::ZERO,
-            v_offset: Word::ZERO,
+            h_offset: 0,
+            v_offset: 0,
             update_vscroll: false,
         }
     }
@@ -392,8 +392,8 @@ impl Vga {
         self.v_counter = 0;
         self.h_pixel = 0;
         self.v_pixel = 0;
-        self.h_offset = Word::ZERO;
-        self.v_offset = Word::ZERO;
+        self.h_offset = 0;
+        self.v_offset = 0;
         self.update_vscroll = false;
     }
 
@@ -462,21 +462,36 @@ impl Vga {
 
     pub fn read_mapped_io(&self, addr: u16) -> u8 {
         match addr {
-            0 => self.h_offset.low().into(),
-            1 => self.h_offset.high().into(),
-            2 => self.v_offset.low().into(),
-            3 => self.v_offset.high().into(),
+            0 => self.h_offset.to_le_bytes()[0],
+            1 => self.h_offset.to_le_bytes()[1],
+            2 => self.v_offset.to_le_bytes()[0],
+            3 => self.v_offset.to_le_bytes()[1],
             _ => 0,
         }
     }
 
     pub fn write_mapped_io(&mut self, addr: u16, value: u8) {
         match addr {
-            0 => self.h_offset.set_low(value.into()),
-            1 => self.h_offset.set_high(value.into()),
-            2 => self.v_offset.set_low(value.into()),
+            0 => {
+                let mut bytes = self.h_offset.to_le_bytes();
+                bytes[0] = value;
+                self.h_offset = u16::from_le_bytes(bytes);
+            }
+            1 => {
+                let mut bytes = self.h_offset.to_le_bytes();
+                bytes[1] = value;
+                self.h_offset = u16::from_le_bytes(bytes);
+            }
+            2 => {
+                let mut bytes = self.v_offset.to_le_bytes();
+                bytes[0] = value;
+                self.v_offset = u16::from_le_bytes(bytes);
+            }
             3 => {
-                self.v_offset.set_high(value.into());
+                let mut bytes = self.v_offset.to_le_bytes();
+                bytes[1] = value;
+                self.v_offset = u16::from_le_bytes(bytes);
+
                 self.update_vscroll = true;
             }
             _ => {}

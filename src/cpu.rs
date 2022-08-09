@@ -617,10 +617,6 @@ impl Display for Cpu {
             "{} {} {} {} {} {}",
             flip_val, carry_l_val, carry_a_val, zero_val, sign_val, overflow_val
         )?;
-        writeln!(f)?;
-        writeln!(f, "Stage 0: {}", self.stage0_instruction)?;
-        writeln!(f, "Stage 1: {}", self.stage1_instruction)?;
-        writeln!(f, "Stage 2: {}", self.stage2_instruction)?;
 
         Ok(())
     }

@@ -3,11 +3,9 @@
 
 mod cpu;
 mod device;
-mod types;
 
 use cpu::Cpu;
 use device::{Audio, Controler, ControlerButton, Lcd, Memory, Uart, Vga};
-use types::*;
 
 use std::collections::VecDeque;
 use std::io::{Stdout, Write};
@@ -377,7 +375,7 @@ impl EmuState {
         const TEXT_FRONT_COLOR: graphics::Color = graphics::Color::new(0.5, 1.0, 0.0, 1.0);
 
         let cpu_info = format!(
-            "{}\n\n\nVGA h-offset: {}\nVGA v-offset: {}",
+            "{}\nVGA h-offset: {}\nVGA v-offset: {}",
             self.cpu,
             self.vga.h_offset(),
             self.vga.v_offset()
