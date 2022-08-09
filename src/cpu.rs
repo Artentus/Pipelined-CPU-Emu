@@ -42,13 +42,6 @@ enum AluOp {
     Clc = 14,
 }
 
-#[bitfield(bits = 8)]
-struct Pipe1AData {
-    lhs_bus_assert: AluBusRegister,
-    rhs_bus_assert: AluBusRegister,
-    alu_op: AluOp,
-}
-
 #[derive(BitfieldSpecifier, Clone, Copy, PartialEq, Eq)]
 #[bits = 3]
 enum TransferBusRegister {
@@ -59,14 +52,6 @@ enum TransferBusRegister {
     Si = 4,
     Di = 5,
     Tx = 6,
-}
-
-#[bitfield(bits = 8)]
-struct Pipe1BData {
-    transfer_bus_load: TransferBusRegister,
-    load_constant: bool, // If true `transfer_bus_load` defines which register to decrement
-    transfer_bus_assert: TransferBusRegister,
-    no_fetch: bool,
 }
 
 #[derive(BitfieldSpecifier, Clone, Copy, PartialEq, Eq)]
@@ -109,12 +94,6 @@ enum MainBusLoadDevice {
     MemBridge = 15,
 }
 
-#[bitfield(bits = 8)]
-struct Pipe2AData {
-    main_bus_assert: MainBusAssertDevice,
-    main_bus_load: MainBusLoadDevice,
-}
-
 #[derive(BitfieldSpecifier, Clone, Copy, PartialEq, Eq)]
 #[bits = 2]
 enum IncrementRegister {
@@ -136,14 +115,42 @@ enum AddressBusRegister {
     Tx = 6,
 }
 
-#[bitfield(bits = 8)]
-struct Pipe2BData {
-    increment_register: IncrementRegister,
-    address_bus_assert: AddressBusRegister,
-    bus_request: bool,
-    flip_pc_ra: bool,
-    break_clock: bool,
+#[allow(dead_code)]
+mod pipeline_data {
+    use super::*;
+
+    #[bitfield(bits = 8)]
+    pub(super) struct Pipe1AData {
+        pub(super) lhs_bus_assert: AluBusRegister,
+        pub(super) rhs_bus_assert: AluBusRegister,
+        pub(super) alu_op: AluOp,
+    }
+
+    #[bitfield(bits = 8)]
+    pub(super) struct Pipe1BData {
+        pub(super) transfer_bus_load: TransferBusRegister,
+        pub(super) load_constant: bool, // If true `transfer_bus_load` defines which register to decrement
+        pub(super) transfer_bus_assert: TransferBusRegister,
+        pub(super) no_fetch: bool,
+    }
+
+    #[bitfield(bits = 8)]
+    pub(super) struct Pipe2AData {
+        pub(super) main_bus_assert: MainBusAssertDevice,
+        pub(super) main_bus_load: MainBusLoadDevice,
+    }
+
+    #[bitfield(bits = 8)]
+    pub(super) struct Pipe2BData {
+        pub(super) increment_register: IncrementRegister,
+        pub(super) address_bus_assert: AddressBusRegister,
+        pub(super) bus_request: bool,
+        pub(super) flip_pc_ra: bool,
+        pub(super) break_clock: bool,
+    }
 }
+
+use pipeline_data::*;
 
 bitflags! {
     struct Flags : u8 {
