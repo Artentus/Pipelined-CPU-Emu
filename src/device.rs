@@ -2,7 +2,8 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub struct Memory {
     data: Box<[u8]>,
-    vga_conflict_data: Option<u8>,
+    vga_conflict: bool,
+    last_vga_data: u8,
 }
 impl Memory {
     const MAP_RANGE_START: u16 = 0x8B00;
@@ -19,7 +20,8 @@ impl Memory {
     pub fn new() -> Self {
         Self {
             data: unsafe { Box::new_zeroed_slice(0x10000).assume_init() },
-            vga_conflict_data: None,
+            vga_conflict: false,
+            last_vga_data: 0,
         }
     }
 
@@ -59,7 +61,7 @@ impl Memory {
             // The signal the VGA receives will then be the value that is currently written by the CPU.
             // This lasts until the CPU write cycle has completed (reset_vga_conflict).
             if (addr >= Self::FRAMEBUFFER_START) && (addr < Self::FRAMEBUFFER_END) {
-                self.vga_conflict_data = Some(value);
+                self.vga_conflict = true;
             }
 
             self.data[addr as usize] = value;
@@ -67,18 +69,20 @@ impl Memory {
     }
 
     pub fn vga_read(&mut self, addr: u16) -> u8 {
-        // If we currently have a bus conflict we have to return
-        // the value that is currently being written by the CPU.
-        if let Some(data) = self.vga_conflict_data {
-            data
+        // If we currently have a bus conflict we have to return the last value that was read by the VGA.
+        if self.vga_conflict {
+            self.last_vga_data
         } else {
-            self.data[((addr & Self::FRAMEBUFFER_MASK) + Self::FRAMEBUFFER_START) as usize]
+            let addr = ((addr & Self::FRAMEBUFFER_MASK) + Self::FRAMEBUFFER_START) as usize;
+            let data = self.data[addr];
+            self.last_vga_data = data;
+            data
         }
     }
 
     #[inline]
     pub fn reset_vga_conflict(&mut self) {
-        self.vga_conflict_data = None;
+        self.vga_conflict = false;
     }
 }
 
@@ -502,24 +506,28 @@ impl Vga {
         const H_PIXELS: u16 = 800; // Number of pixels horizontally (including blanking)
         const V_PIXELS: u16 = 525; // Number of pixels vertically (including blanking)
 
+        // In hardware the scroll offsets include the front porch region of the screen.
+        const BASE_H_OFFSET: u16 = 47;
+        const BASE_V_OFFSET: u16 = 33;
+
         for _ in 0..n {
             self.h_counter += 1;
-            self.h_pixel += 1;
+            self.h_pixel = self.h_pixel.wrapping_add(1);
 
             if self.h_counter == H_PIXELS {
                 self.h_counter = 0;
-                self.h_pixel = self.h_offset.into();
+                self.h_pixel = self.h_offset.wrapping_add(BASE_H_OFFSET);
 
                 self.v_counter += 1;
                 if self.update_vscroll {
                     self.v_pixel = self.v_offset.into();
                 } else {
-                    self.v_pixel += 1;
+                    self.v_pixel = self.v_pixel.wrapping_add(1);
                 }
 
                 if self.v_counter == V_PIXELS {
                     self.v_counter = 0;
-                    self.v_pixel = self.v_offset.into();
+                    self.v_pixel = self.v_offset.wrapping_add(BASE_V_OFFSET);
                     self.update_vscroll = false;
                 }
             }
