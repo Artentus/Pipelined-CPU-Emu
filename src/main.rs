@@ -9,9 +9,11 @@ use device::{Audio, Controler, ControlerButton, Lcd, Memory, Uart, Vga};
 
 use std::collections::VecDeque;
 use std::io::{Stdout, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use clap::Parser;
 use crossbeam::queue::SegQueue;
 use crossterm::{cursor, style, terminal};
 use crossterm::{ExecutableCommand, QueueableCommand};
@@ -241,6 +243,31 @@ impl EmuState {
         self.vga.reset();
     }
 
+    pub fn load_program(&mut self, path: &Path) {
+        match std::fs::read(path) {
+            Ok(data) => {
+                if data.len() <= 0xE000 {
+                    self.memory.init_region(&data, 0);
+                } else {
+                    msgbox::create(
+                        "Invalid binary file",
+                        "The binary file is too big.",
+                        msgbox::IconType::Error,
+                    )
+                    .unwrap();
+                }
+            }
+            Err(err) => {
+                msgbox::create(
+                    "Error reading file",
+                    &err.to_string(),
+                    msgbox::IconType::Error,
+                )
+                .unwrap();
+            }
+        }
+    }
+
     fn process_terminal(&mut self) -> GameResult {
         while let Some(data) = self.output_queue.pop_front() {
             if let Some(high_bytes) = &mut self.partial_char {
@@ -315,6 +342,52 @@ impl EmuState {
         self.process_terminal()?;
         self.stdout.flush()?;
 
+        Ok(())
+    }
+
+    pub fn execute_program(&mut self) -> GameResult {
+        let mut loader_finished = false;
+        loop {
+            self.cpu
+                .clock(
+                    &mut self.memory,
+                    &mut self.lcd,
+                    &mut self.uart,
+                    &mut self.audio,
+                    &mut self.vga,
+                    &mut self.controler,
+                )
+                .expect("invalid instruction");
+
+            self.baud_cycles += 1.0;
+            while self.baud_cycles >= self.cycles_per_baud {
+                self.baud_cycles -= self.cycles_per_baud;
+
+                if let Some(data) = self.uart.host_read() {
+                    self.output_queue.push_back(data);
+
+                    if data == b'>' {
+                        loader_finished = true;
+                    }
+                }
+            }
+
+            if loader_finished {
+                break;
+            }
+        }
+
+        self.process_terminal()?;
+        self.stdout.flush()?;
+
+        self.uart.host_write(b'j');
+        self.uart.host_write(b'm');
+        self.uart.host_write(b'p');
+        self.uart.host_write(b' ');
+        self.uart.host_write(b'0');
+        self.uart.host_write(b'\r');
+
+        self.running = true;
         Ok(())
     }
 
@@ -553,28 +626,7 @@ impl EventHandler<GameError> for EmuState {
                 if !self.running {
                     let dialog = rfd::FileDialog::new().add_filter("Binary files", &["bin"]);
                     if let Some(path) = dialog.pick_file() {
-                        match std::fs::read(path) {
-                            Ok(data) => {
-                                if data.len() <= 0xE000 {
-                                    self.memory.init_region(&data, 0);
-                                } else {
-                                    msgbox::create(
-                                        "Invalid binary file",
-                                        "The binary file is too big.",
-                                        msgbox::IconType::Error,
-                                    )
-                                    .unwrap();
-                                }
-                            }
-                            Err(err) => {
-                                msgbox::create(
-                                    "Error reading file",
-                                    &err.to_string(),
-                                    msgbox::IconType::Error,
-                                )
-                                .unwrap();
-                            }
-                        }
+                        self.load_program(&path);
                     }
                 }
             }
@@ -669,7 +721,18 @@ fn map_button(button: event::Button) -> Option<ControlerButton> {
     }
 }
 
+/// Emulator for the 8 Bit Pipelined CPU by James Sharman
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// Binary file to load and run
+    #[clap(short, long, value_parser)]
+    run: Option<PathBuf>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+
     let window_setup = WindowSetup::default()
         .title(&format!("{} v{}", TITLE, VERSION))
         .vsync(false)
@@ -694,6 +757,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = EmuState::create(font, sample_buffer)?;
     state.reset();
+
+    if let Some(path) = &args.run {
+        state.load_program(path);
+        state.execute_program()?;
+    }
 
     event::run(ctx, event_loop, state)
 }
