@@ -13,6 +13,8 @@ const PIPE_1B: PipeRom = include_bytes!("../res/Pipe1B.bin");
 const PIPE_2A: PipeRom = include_bytes!("../res/Pipe2A.bin");
 const PIPE_2B: PipeRom = include_bytes!("../res/Pipe2B.bin");
 
+const LOGICAL_CARRY_PRESERVE_JUMPER: bool = false;
+
 #[derive(BitfieldSpecifier, Clone, Copy, PartialEq, Eq)]
 #[bits = 2]
 enum AluBusRegister {
@@ -191,7 +193,13 @@ impl From<AluOp> for AluLhsOp {
 
 fn execute_alu_lhs_op(lhs: u8, cl_in: bool, op: AluLhsOp) -> (u8, bool) {
     match op {
-        AluLhsOp::Pass => (lhs, cl_in),
+        AluLhsOp::Pass => {
+            if LOGICAL_CARRY_PRESERVE_JUMPER {
+                (lhs, cl_in)
+            } else {
+                (lhs, false)
+            }
+        }
         AluLhsOp::ShiftLeft => (
             if cl_in { (lhs << 1) | 0x01 } else { lhs << 1 },
             (lhs & 0x80) != 0,
