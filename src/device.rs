@@ -2,8 +2,10 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub struct Memory {
     data: Box<[u8]>,
-    vga_conflict: bool,
-    last_vga_data: u8,
+    framebuffer_conflict: bool,
+    last_framebuffer_data: u8,
+    palette_conflict: bool,
+    last_palette_data: Color,
 }
 impl Memory {
     const MAP_RANGE_START: u16 = 0x8B00;
@@ -15,13 +17,18 @@ impl Memory {
     const FRAMEBUFFER_END: u16 = 0xE000;
     const FRAMEBUFFER_MASK: u16 = 0x1FFF;
 
+    const PALETTE_START: u16 = 0x8C00;
+    const PALETTE_END: u16 = 0x9000;
+
     #[inline]
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             data: unsafe { Box::new_zeroed_slice(0x10000).assume_init() },
-            vga_conflict: false,
-            last_vga_data: 0,
+            framebuffer_conflict: false,
+            last_framebuffer_data: 0,
+            palette_conflict: false,
+            last_palette_data: Color::BLACK,
         }
     }
 
@@ -57,32 +64,48 @@ impl Memory {
                 vga.write_mapped_io(vga_addr, value);
             }
         } else {
-            // When the CPU writes into the framebuffer it causes a bus conflict with the VGA output.
-            // The signal the VGA receives will then be the value that is currently written by the CPU.
-            // This lasts until the CPU write cycle has completed (reset_vga_conflict).
+            // When the CPU writes into the framebuffer or the palette, the VGA is unable
+            // to read from that location in order to avoid a bus conflict. If this happens
+            // the VGA will effectively read the last valid value.
             if (addr >= Self::FRAMEBUFFER_START) && (addr < Self::FRAMEBUFFER_END) {
-                self.vga_conflict = true;
+                self.framebuffer_conflict = true;
+            } else if (addr >= Self::PALETTE_START) && (addr < Self::PALETTE_END) {
+                self.palette_conflict = true;
             }
 
             self.data[addr as usize] = value;
         }
     }
 
-    pub fn vga_read(&mut self, addr: u16) -> u8 {
+    pub fn framebuffer_read(&mut self, addr: u16) -> u8 {
         // If we currently have a bus conflict we have to return the last value that was read by the VGA.
-        if self.vga_conflict {
-            self.last_vga_data
+        if self.framebuffer_conflict {
+            self.last_framebuffer_data
         } else {
             let addr = ((addr & Self::FRAMEBUFFER_MASK) + Self::FRAMEBUFFER_START) as usize;
             let data = self.data[addr];
-            self.last_vga_data = data;
+            self.last_framebuffer_data = data;
             data
+        }
+    }
+
+    pub fn palette_read(&mut self, index: u8) -> Color {
+        // If we currently have a bus conflict we have to return the last value that was read by the VGA.
+        if self.palette_conflict {
+            self.last_palette_data
+        } else {
+            let addr = (((index as u16) * 4) + Self::PALETTE_START) as usize;
+            let mut color = Color::BLACK;
+            color.channels[0..3].copy_from_slice(&self.data[addr..(addr + 3)]);
+            self.last_palette_data = color;
+            color
         }
     }
 
     #[inline]
     pub fn reset_vga_conflict(&mut self) {
-        self.vga_conflict = false;
+        self.framebuffer_conflict = false;
+        self.palette_conflict = false;
     }
 }
 
@@ -537,21 +560,11 @@ impl Vga {
                 let v_addr = (self.v_pixel >> 3) & 0x3F;
                 let addr = h_addr | (v_addr << 7);
 
-                let color332 = mem.vga_read(addr);
-                let r3 = ((color332 >> 0) & 0x07) as u16;
-                let g3 = ((color332 >> 3) & 0x07) as u16;
-                let b2 = ((color332 >> 6) & 0x03) as u16;
+                let palette_index = mem.framebuffer_read(addr);
+                let color = mem.palette_read(palette_index);
 
-                let r8 = (r3 * 0xFF / 0x07) as u8;
-                let g8 = (g3 * 0xFF / 0x07) as u8;
-                let b8 = (b2 * 0xFF / 0x03) as u8;
-                let color888 = Color::from_rgb(r8, g8, b8);
-
-                self.buffer.set_pixel_at(
-                    self.h_counter as usize,
-                    self.v_counter as usize,
-                    color888,
-                );
+                self.buffer
+                    .set_pixel_at(self.h_counter as usize, self.v_counter as usize, color);
             }
         }
     }
