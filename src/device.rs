@@ -2,10 +2,12 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 pub struct Memory {
     data: Box<[u8]>,
+    palette_data: Box<[u8]>,
     framebuffer_conflict: bool,
     last_framebuffer_data: u8,
     palette_conflict: bool,
     last_palette_data: Color,
+    palette_high: u8,
 }
 impl Memory {
     const MAP_RANGE_START: u16 = 0x8B00;
@@ -25,10 +27,12 @@ impl Memory {
     pub fn new() -> Self {
         Self {
             data: unsafe { Box::new_zeroed_slice(0x10000).assume_init() },
+            palette_data: unsafe { Box::new_zeroed_slice(0x8000).assume_init() },
             framebuffer_conflict: false,
             last_framebuffer_data: 0,
             palette_conflict: false,
             last_palette_data: Color::BLACK,
+            palette_high: 0,
         }
     }
 
@@ -71,6 +75,15 @@ impl Memory {
                 self.framebuffer_conflict = true;
             } else if (addr >= Self::PALETTE_START) && (addr < Self::PALETTE_END) {
                 self.palette_conflict = true;
+
+                let palette_addr_high = (self.palette_high as u16) << 10;
+                let palette_addr_low = addr & 0x3FF;
+                let palette_addr = (palette_addr_high | palette_addr_low) as usize;
+                self.palette_data[palette_addr] = value;
+
+                if (addr & 0x3) == 0x3 {
+                    self.palette_high = value & 0x1F;
+                }
             }
 
             self.data[addr as usize] = value;
@@ -94,9 +107,13 @@ impl Memory {
         if self.palette_conflict {
             self.last_palette_data
         } else {
-            let addr = (((index as u16) * 4) + Self::PALETTE_START) as usize;
+            let palette_addr_high = (self.palette_high as u16) << 10;
+            let palette_addr_low = (index as u16) * 4;
+            let palette_addr = (palette_addr_high | palette_addr_low) as usize;
+
             let mut color = Color::BLACK;
-            color.channels[0..3].copy_from_slice(&self.data[addr..(addr + 3)]);
+            color.channels[0..3]
+                .copy_from_slice(&self.palette_data[palette_addr..(palette_addr + 3)]);
             self.last_palette_data = color;
             color
         }
