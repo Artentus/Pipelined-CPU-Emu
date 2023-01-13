@@ -8,24 +8,18 @@ use cpu::Cpu;
 use device::{Audio, Controler, ControlerButton, Lcd, Memory, Uart, Vga};
 
 use std::collections::VecDeque;
-use std::io::{Stdout, Write};
+use std::io::{self, Stdout, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
 use crossbeam::queue::SegQueue;
-use crossterm::{cursor, style, terminal};
+use crossterm::{cursor, event, style, terminal};
 use crossterm::{ExecutableCommand, QueueableCommand};
-use ggez::conf::{NumSamples, WindowMode, WindowSetup};
-use ggez::event::{EventHandler, KeyCode, KeyMods};
-use ggez::graphics::{
-    Color, DrawParam, FilterMode, Font, Image, PxScale, Rect, Text, TextFragment, WrapMode,
-};
-use ggez::{event, graphics, timer, Context, ContextBuilder, GameError, GameResult};
 use spin_sleep::LoopHelper;
 
-const TITLE: &str = "Pipelined CPU Emu";
+const TITLE: &str = "JAM-1 Emulator";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
 
@@ -155,15 +149,14 @@ struct EmuState {
     audio_cycles: f64,
     vga_cycles: f64,
     loop_helper: LoopHelper,
+    fps: f64,
 
     stdout: Stdout,
     input_queue: VecDeque<u8>,
     output_queue: VecDeque<u8>,
     partial_char: Option<Utf8Builder>,
+    vga_texture: egui::TextureHandle,
     sample_buffer: Arc<SegQueue<f32>>,
-
-    font: Font,
-    show_debug_info: bool,
 
     clock_rate: f64,
     cycles_per_frame: f64,
@@ -174,21 +167,22 @@ struct EmuState {
     vga_cycles_per_cpu_cycle: f64,
 }
 impl EmuState {
-    pub fn create(font: Font, sample_buffer: Arc<SegQueue<f32>>) -> GameResult<Self> {
+    pub fn create(
+        ui_context: &egui::Context,
+        sample_buffer: Arc<SegQueue<f32>>,
+    ) -> io::Result<Self> {
         terminal::enable_raw_mode()?;
 
-        let mut stdout = std::io::stdout();
+        let mut stdout = io::stdout();
         stdout.execute(terminal::EnterAlternateScreen)?;
         stdout.execute(terminal::Clear(terminal::ClearType::All))?;
         stdout.execute(terminal::Clear(terminal::ClearType::Purge))?;
         stdout.execute(cursor::MoveTo(0, 0))?;
 
-        const MONITOR_BYTES: &[u8] = include_bytes!("../res/Monitor.bin");
-        let mut memory = Memory::new();
-        memory.init_region(MONITOR_BYTES, CPU_RESET_PC);
-
-        let mut cpu = Cpu::new();
-        cpu.reset(CPU_RESET_PC);
+        const SCREEN_SIZE: [usize; 2] = [SCREEN_WIDTH as usize, SCREEN_HEIGHT as usize];
+        let vga_image = egui::ColorImage::new(SCREEN_SIZE, egui::Color32::BLACK);
+        let vga_texture =
+            ui_context.load_texture("VGA Framebuffer", vga_image, egui::TextureOptions::NEAREST);
 
         let clock_rate = INITIAL_CLOCK_RATE;
         let cycles_per_frame = clock_rate / FRAME_RATE;
@@ -199,8 +193,8 @@ impl EmuState {
         let vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / clock_rate;
 
         Ok(Self {
-            cpu,
-            memory,
+            cpu: Cpu::new(),
+            memory: Memory::new(),
             lcd: Lcd::new(),
             uart: Uart::new(),
             audio: Audio::new(),
@@ -217,15 +211,14 @@ impl EmuState {
                 .native_accuracy_ns(1_500_000)
                 .report_interval_s(0.5)
                 .build_with_target_rate(FRAME_RATE),
+            fps: 0.0,
 
             stdout,
             input_queue: VecDeque::new(),
             output_queue: VecDeque::new(),
             partial_char: None,
+            vga_texture,
             sample_buffer,
-
-            font,
-            show_debug_info: true,
 
             clock_rate,
             cycles_per_frame,
@@ -239,36 +232,23 @@ impl EmuState {
 
     #[inline]
     pub fn reset(&mut self) {
+        const MONITOR_BYTES: &[u8] = include_bytes!("../res/Monitor.bin");
+        self.memory.init_region(MONITOR_BYTES, CPU_RESET_PC);
+
         self.cpu.reset(CPU_RESET_PC);
         self.vga.reset();
     }
 
-    pub fn load_program(&mut self, path: &Path) {
-        match std::fs::read(path) {
-            Ok(data) => {
-                if data.len() <= 0xE000 {
-                    self.memory.init_region(&data, 0);
-                } else {
-                    msgbox::create(
-                        "Invalid binary file",
-                        "The binary file is too big.",
-                        msgbox::IconType::Error,
-                    )
-                    .unwrap();
-                }
-            }
-            Err(err) => {
-                msgbox::create(
-                    "Error reading file",
-                    &err.to_string(),
-                    msgbox::IconType::Error,
-                )
-                .unwrap();
-            }
+    pub fn load_program(&mut self, path: &Path) -> io::Result<()> {
+        let data = std::fs::read(path)?;
+        if data.len() <= 0xE000 {
+            self.memory.init_region(&data, 0);
         }
+
+        Ok(())
     }
 
-    fn process_terminal(&mut self) -> GameResult {
+    fn process_terminal(&mut self) -> io::Result<()> {
         while let Some(data) = self.output_queue.pop_front() {
             if let Some(high_bytes) = &mut self.partial_char {
                 if let Some(c) = high_bytes.process_data(data) {
@@ -286,7 +266,19 @@ impl EmuState {
         Ok(())
     }
 
-    fn clock(&mut self, n: u64) -> GameResult {
+    fn button_down(&mut self, button: gilrs::Button) {
+        if let Some(button) = map_button(button) {
+            self.controler.host_button_down(button);
+        }
+    }
+
+    fn button_up(&mut self, button: gilrs::Button) {
+        if let Some(button) = map_button(button) {
+            self.controler.host_button_up(button);
+        }
+    }
+
+    fn clock(&mut self, n: u64) -> io::Result<()> {
         for _ in 0..n {
             let break_point = self
                 .cpu
@@ -345,7 +337,7 @@ impl EmuState {
         Ok(())
     }
 
-    pub fn execute_program(&mut self) -> GameResult {
+    pub fn execute_program(&mut self) -> io::Result<()> {
         let mut loader_finished = false;
         loop {
             self.cpu
@@ -391,113 +383,31 @@ impl EmuState {
         Ok(())
     }
 
-    fn clock_frame(&mut self) -> GameResult {
+    fn clock_frame(&mut self) -> io::Result<()> {
         self.fractional_cycles += self.fract_cycles_per_frame;
         let cycles_to_add = self.fractional_cycles as u64;
         self.fractional_cycles -= cycles_to_add as f64;
         let cycle_count = self.whole_cycles_per_frame + cycles_to_add;
 
-        self.clock(cycle_count)
-    }
+        self.clock(cycle_count)?;
 
-    fn draw_screen(&self, ctx: &mut Context) -> GameResult {
-        let (window_width, window_height) = graphics::drawable_size(ctx);
-        let (scale_x, scale_y) = (
-            window_width / (SCREEN_WIDTH as f32),
-            window_height / (SCREEN_HEIGHT as f32),
-        );
-        let mut scale = f32::min(scale_x, scale_y);
-        if scale > 1.0 {
-            scale = scale.floor();
-        }
-
-        let (draw_width, draw_height) = (
-            (SCREEN_WIDTH as f32) * scale,
-            (SCREEN_HEIGHT as f32) * scale,
-        );
-        let filter =
-            if (draw_width < (SCREEN_WIDTH as f32)) || (draw_height < (SCREEN_HEIGHT as f32)) {
-                FilterMode::Linear
-            } else {
-                FilterMode::Nearest
-            };
-
-        let mut screen = Image::from_rgba8(
-            ctx,
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
+        const SCREEN_SIZE: [usize; 2] = [SCREEN_WIDTH as usize, SCREEN_HEIGHT as usize];
+        let vga_image = egui::ColorImage::from_rgba_unmultiplied(
+            SCREEN_SIZE,
             self.vga.framebuffer().pixel_data(),
-        )?;
-        screen.set_filter(filter);
-        screen.set_wrap(WrapMode::Clamp, WrapMode::Clamp);
-
-        let params = DrawParam::default()
-            .dest([
-                (window_width - draw_width) / 2.0,
-                (window_height - draw_height) / 2.0,
-            ])
-            .scale([scale, scale]);
-        graphics::draw(ctx, &screen, params)?;
-
-        Ok(())
-    }
-
-    fn draw_debug_info(&self, ctx: &mut Context) -> GameResult {
-        const TEXT_SCALE: PxScale = PxScale { x: 20.0, y: 20.0 };
-        const TEXT_BACK_COLOR: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
-        const TEXT_FRONT_COLOR: graphics::Color = graphics::Color::new(0.5, 1.0, 0.0, 1.0);
-
-        let cpu_info = format!(
-            "{}\nVGA h-offset: {}\nVGA v-offset: {}",
-            self.cpu,
-            self.vga.h_offset(),
-            self.vga.v_offset()
         );
-        let cpu_info_frag = TextFragment::new(cpu_info)
-            .font(self.font)
-            .scale(TEXT_SCALE);
-        let cpu_info_text = Text::new(cpu_info_frag);
-        graphics::draw(
-            ctx,
-            &cpu_info_text,
-            DrawParam::default()
-                .dest([11.0, 9.0])
-                .color(TEXT_BACK_COLOR),
-        )?;
-        graphics::draw(
-            ctx,
-            &cpu_info_text,
-            DrawParam::default()
-                .dest([10.0, 8.0])
-                .color(TEXT_FRONT_COLOR),
-        )?;
+        self.vga_texture
+            .set(vga_image, egui::TextureOptions::NEAREST);
 
         Ok(())
     }
-}
-impl EventHandler<GameError> for EmuState {
-    fn update(&mut self, ctx: &mut Context) -> GameResult {
+
+    fn update(&mut self) -> io::Result<()> {
         self.loop_helper.loop_sleep();
         self.loop_helper.loop_start();
 
         if let Some(fps) = self.loop_helper.report_rate() {
-            if self.running {
-                graphics::set_window_title(
-                    ctx,
-                    &format!(
-                        "{} v{} - {:.2} fps - {}",
-                        TITLE,
-                        VERSION,
-                        fps,
-                        format_clock_rate(fps * self.cycles_per_frame)
-                    ),
-                );
-            } else {
-                graphics::set_window_title(
-                    ctx,
-                    &format!("{} v{} - {:.2} fps", TITLE, VERSION, fps),
-                );
-            }
+            self.fps = fps;
         }
 
         while crossterm::event::poll(Duration::ZERO)? {
@@ -562,166 +472,314 @@ impl EventHandler<GameError> for EmuState {
             self.clock_frame()?;
         }
 
-        timer::yield_now();
         Ok(())
     }
 
-    fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        graphics::clear(ctx, Color::BLACK);
-        self.draw_screen(ctx)?;
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        use egui::panel::*;
+        use egui::style::*;
+        use egui::*;
 
-        if self.show_debug_info {
-            self.draw_debug_info(ctx)?;
-        }
+        SidePanel::new(Side::Right, "ctrl")
+            .show_separator_line(false)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                ui.style_mut().wrap = Some(false);
 
-        graphics::present(ctx)?;
-        timer::yield_now();
+                TopBottomPanel::new(TopBottomSide::Top, "Emulator Control").show_inside(ui, |ui| {
+                    if ui
+                        .add_enabled(!self.running, Button::new("Load Binary"))
+                        .clicked()
+                    {
+                        let dialog = rfd::FileDialog::new().add_filter("Binary files", &["bin"]);
+                        if let Some(path) = dialog.pick_file() {
+                            self.load_program(&path).unwrap();
+                        }
+                    }
+
+                    if self.running {
+                        ui.label(format!(
+                            "{:.2} fps - {}",
+                            self.fps,
+                            format_clock_rate(self.fps * self.cycles_per_frame)
+                        ));
+                    } else {
+                        ui.label(format!("{:.2} fps", self.fps));
+                    }
+
+                    ui.with_layout(
+                        Layout {
+                            main_dir: Direction::LeftToRight,
+                            ..*ui.layout()
+                        },
+                        |ui| {
+                            if ui
+                                .button(if self.running { "Pause" } else { "Run" })
+                                .clicked()
+                            {
+                                self.running = !self.running;
+                            }
+
+                            if ui
+                                .add_enabled(!self.running, Button::new("Single Step"))
+                                .clicked()
+                            {
+                                self.clock(1).unwrap();
+                            }
+
+                            if ui
+                                .add_enabled(!self.running, Button::new("Frame Step"))
+                                .clicked()
+                            {
+                                self.clock_frame().unwrap();
+                            }
+
+                            if ui.button("Reset").clicked() {
+                                self.running = false;
+                                self.reset();
+                            }
+                        },
+                    );
+
+                    ui.add_space(10.0);
+                });
+
+                TopBottomPanel::new(TopBottomSide::Top, "Register View").show_inside(ui, |ui| {
+                    SidePanel::new(Side::Left, "regs16")
+                        .show_separator_line(false)
+                        .resizable(false)
+                        .frame(Frame {
+                            inner_margin: Margin::symmetric(35.0, 10.0),
+                            ..Default::default()
+                        })
+                        .show_inside(ui, |ui| {
+                            ui.with_layout(ui.layout().with_cross_align(Align::Center), |ui| {
+                                ui.label("16 Bit Regs");
+
+                                ui.label(format!("PC: {:0>4X}", self.cpu.pc()));
+                                ui.label(format!("RA: {:0>4X}", self.cpu.ra()));
+                                ui.label(format!("SP: {:0>4X}", self.cpu.sp()));
+                                ui.label(format!("SI: {:0>4X}", self.cpu.si()));
+                                ui.label(format!("DI: {:0>4X}", self.cpu.di()));
+                                ui.label(format!("TX: {:0>4X}", self.cpu.tx()));
+                            });
+                        });
+
+                    SidePanel::new(Side::Left, "regs8")
+                        .show_separator_line(false)
+                        .resizable(false)
+                        .frame(Frame {
+                            inner_margin: Margin::symmetric(35.0, 10.0),
+                            ..Default::default()
+                        })
+                        .show_inside(ui, |ui| {
+                            ui.with_layout(ui.layout().with_cross_align(Align::Center), |ui| {
+                                ui.label("8 Bit Regs");
+
+                                ui.label(format!("A:  {:0>2X}", self.cpu.a()));
+                                ui.label(format!("B:  {:0>2X}", self.cpu.b()));
+                                ui.label(format!("C:  {:0>2X}", self.cpu.c()));
+                                ui.label(format!("D:  {:0>2X}", self.cpu.d()));
+                                ui.label(format!("TL: {:0>2X}", self.cpu.tl()));
+                                ui.label(format!("TH: {:0>2X}", self.cpu.th()));
+                            });
+                        });
+
+                    SidePanel::new(Side::Right, "flags")
+                        .show_separator_line(false)
+                        .resizable(false)
+                        .frame(Frame {
+                            inner_margin: Margin::symmetric(35.0, 10.0),
+                            ..Default::default()
+                        })
+                        .show_inside(ui, |ui| {
+                            ui.with_layout(ui.layout().with_cross_align(Align::Center), |ui| {
+                                ui.label("Flags");
+
+                                let overflow_val: u8 =
+                                    self.cpu.flags().contains(cpu::Flags::OVERFLOW).into();
+                                let sign_val: u8 =
+                                    self.cpu.flags().contains(cpu::Flags::SIGN).into();
+                                let zero_val: u8 =
+                                    self.cpu.flags().contains(cpu::Flags::ZERO).into();
+                                let carry_a_val: u8 =
+                                    self.cpu.flags().contains(cpu::Flags::CARRY_A).into();
+                                let carry_l_val: u8 =
+                                    self.cpu.flags().contains(cpu::Flags::CARRY_L).into();
+                                let flip_val: u8 =
+                                    self.cpu.flags().contains(cpu::Flags::PC_RA_FLIP).into();
+
+                                ui.label("F L C Z S O");
+                                ui.label(format!(
+                                    "{} {} {} {} {} {}",
+                                    flip_val,
+                                    carry_l_val,
+                                    carry_a_val,
+                                    zero_val,
+                                    sign_val,
+                                    overflow_val
+                                ));
+                            });
+                        });
+                });
+
+                CentralPanel::default().show_inside(ui, |ui| {
+                    ui.with_layout(ui.layout().with_cross_align(Align::Center), |ui| {
+                        ui.label("Memory")
+                    });
+
+                    ui.label("ADDR | 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F");
+                    ui.separator();
+
+                    ScrollArea::new([false, true]).show(ui, |ui| {
+                        for addr in (u16::MIN..=u16::MAX).step_by(16) {
+                            use std::fmt::Write;
+
+                            let mut text = String::new();
+                            write!(text, "{:0>4X} |", addr).unwrap();
+                            for i in 0..16 {
+                                write!(text, " {:0>2X}", self.memory.read(&self.vga, addr + i))
+                                    .unwrap();
+                            }
+                            ui.label(text);
+                        }
+                    });
+                });
+            });
+
+        CentralPanel::default()
+            .frame(Frame::side_top_panel(&Style {
+                visuals: Visuals {
+                    panel_fill: Color32::BLACK,
+                    ..Visuals::dark()
+                },
+                ..Default::default()
+            }))
+            .show_inside(ui, |ui| {
+                const SCREEN_SIZE: Vec2 = Vec2::new(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32);
+
+                let xf = ui.available_width() / (SCREEN_WIDTH as f32);
+                let yf = ui.available_height() / (SCREEN_HEIGHT as f32);
+                let f = f32::min(xf, yf);
+                let size = SCREEN_SIZE * f;
+
+                ui.centered_and_justified(|ui| {
+                    ui.image(self.vga_texture.id(), size);
+                })
+            });
+    }
+
+    fn quit(&mut self) -> io::Result<()> {
+        terminal::disable_raw_mode()?;
+        self.stdout.execute(terminal::LeaveAlternateScreen)?;
+        self.stdout
+            .execute(terminal::Clear(terminal::ClearType::All))?;
+        self.stdout
+            .execute(terminal::Clear(terminal::ClearType::Purge))?;
+        self.stdout.execute(cursor::MoveTo(0, 0))?;
+        self.stdout.execute(cursor::Show)?;
 
         Ok(())
-    }
-
-    fn resize_event(&mut self, ctx: &mut Context, width: f32, height: f32) {
-        graphics::set_screen_coordinates(
-            ctx,
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                w: width,
-                h: height,
-            },
-        )
-        .unwrap();
-    }
-
-    fn key_down_event(
-        &mut self,
-        ctx: &mut Context,
-        keycode: KeyCode,
-        _keymods: KeyMods,
-        _repeat: bool,
-    ) {
-        match keycode {
-            KeyCode::Escape => ggez::event::quit(ctx),
-            KeyCode::Space => self.running = !self.running,
-            KeyCode::D => self.show_debug_info = !self.show_debug_info,
-            KeyCode::C => {
-                if !self.running {
-                    if let Err(_) = self.clock(1) {
-                        ggez::event::quit(ctx);
-                    }
-                }
-            }
-            KeyCode::F => {
-                if !self.running {
-                    if let Err(_) = self.clock_frame() {
-                        ggez::event::quit(ctx);
-                    }
-                }
-            }
-            KeyCode::R => {
-                self.running = false;
-                self.reset();
-            }
-            KeyCode::O => {
-                if !self.running {
-                    let dialog = rfd::FileDialog::new().add_filter("Binary files", &["bin"]);
-                    if let Some(path) = dialog.pick_file() {
-                        self.load_program(&path);
-                    }
-                }
-            }
-            KeyCode::NumpadAdd => {
-                if self.clock_rate < 64_000_000.0 {
-                    self.clock_rate *= 2.0;
-                    self.cycles_per_frame = self.clock_rate / FRAME_RATE;
-                    self.whole_cycles_per_frame = self.cycles_per_frame as u64;
-                    self.fract_cycles_per_frame =
-                        self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
-                    self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
-                    self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
-                    self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
-                }
-            }
-            KeyCode::NumpadSubtract => {
-                if self.clock_rate > 1_000.0 {
-                    self.clock_rate /= 2.0;
-                    self.cycles_per_frame = self.clock_rate / FRAME_RATE;
-                    self.whole_cycles_per_frame = self.cycles_per_frame as u64;
-                    self.fract_cycles_per_frame =
-                        self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
-                    self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
-                    self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
-                    self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn quit_event(&mut self, _ctx: &mut Context) -> bool {
-        let _ = terminal::disable_raw_mode();
-        let _ = self.stdout.execute(terminal::LeaveAlternateScreen);
-        let _ = self
-            .stdout
-            .execute(terminal::Clear(terminal::ClearType::All));
-        let _ = self
-            .stdout
-            .execute(terminal::Clear(terminal::ClearType::Purge));
-        let _ = self.stdout.execute(cursor::MoveTo(0, 0));
-        let _ = self.stdout.execute(cursor::Show);
-
-        false
-    }
-
-    fn gamepad_button_down_event(
-        &mut self,
-        _ctx: &mut Context,
-        btn: event::Button,
-        _id: event::GamepadId,
-    ) {
-        if let Some(button) = map_button(btn) {
-            self.controler.host_button_down(button);
-        }
-    }
-
-    fn gamepad_button_up_event(
-        &mut self,
-        _ctx: &mut Context,
-        btn: event::Button,
-        _id: event::GamepadId,
-    ) {
-        if let Some(button) = map_button(btn) {
-            self.controler.host_button_up(button);
-        }
     }
 }
 
-fn map_button(button: event::Button) -> Option<ControlerButton> {
+//impl EventHandler<GameError> for EmuState {
+//
+//
+//    fn key_down_event(
+//        &mut self,
+//        ctx: &mut Context,
+//        keycode: KeyCode,
+//        _keymods: KeyMods,
+//        _repeat: bool,
+//    ) {
+//        match keycode {
+//            KeyCode::Escape => ggez::event::quit(ctx),
+//            KeyCode::Space => self.running = !self.running,
+//            KeyCode::D => self.show_debug_info = !self.show_debug_info,
+//            KeyCode::C => {
+//                if !self.running {
+//                    if let Err(_) = self.clock(1) {
+//                        ggez::event::quit(ctx);
+//                    }
+//                }
+//            }
+//            KeyCode::F => {
+//                if !self.running {
+//                    if let Err(_) = self.clock_frame() {
+//                        ggez::event::quit(ctx);
+//                    }
+//                }
+//            }
+//            KeyCode::R => {
+//                self.running = false;
+//                self.reset();
+//            }
+//            KeyCode::O => {
+//                if !self.running {
+//                    let dialog = rfd::FileDialog::new().add_filter("Binary files", &["bin"]);
+//                    if let Some(path) = dialog.pick_file() {
+//                        self.load_program(&path);
+//                    }
+//                }
+//            }
+//            KeyCode::NumpadAdd => {
+//                if self.clock_rate < 64_000_000.0 {
+//                    self.clock_rate *= 2.0;
+//                    self.cycles_per_frame = self.clock_rate / FRAME_RATE;
+//                    self.whole_cycles_per_frame = self.cycles_per_frame as u64;
+//                    self.fract_cycles_per_frame =
+//                        self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
+//                    self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
+//                    self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
+//                    self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
+//                }
+//            }
+//            KeyCode::NumpadSubtract => {
+//                if self.clock_rate > 1_000.0 {
+//                    self.clock_rate /= 2.0;
+//                    self.cycles_per_frame = self.clock_rate / FRAME_RATE;
+//                    self.whole_cycles_per_frame = self.cycles_per_frame as u64;
+//                    self.fract_cycles_per_frame =
+//                        self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
+//                    self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
+//                    self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
+//                    self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
+//                }
+//            }
+//            _ => {}
+//        }
+//    }
+//
+//
+//}
+
+fn map_button(button: gilrs::Button) -> Option<ControlerButton> {
     match button {
-        event::Button::South => Some(ControlerButton::B),
-        event::Button::East => Some(ControlerButton::A),
-        event::Button::North => Some(ControlerButton::X),
-        event::Button::West => Some(ControlerButton::Y),
-        event::Button::C => None,
-        event::Button::Z => None,
-        event::Button::LeftTrigger => Some(ControlerButton::L),
-        event::Button::LeftTrigger2 => None,
-        event::Button::RightTrigger => Some(ControlerButton::R),
-        event::Button::RightTrigger2 => None,
-        event::Button::Select => Some(ControlerButton::Select),
-        event::Button::Start => Some(ControlerButton::Start),
-        event::Button::Mode => None,
-        event::Button::LeftThumb => None,
-        event::Button::RightThumb => None,
-        event::Button::DPadUp => Some(ControlerButton::Up),
-        event::Button::DPadDown => Some(ControlerButton::Down),
-        event::Button::DPadLeft => Some(ControlerButton::Left),
-        event::Button::DPadRight => Some(ControlerButton::Right),
-        event::Button::Unknown => None,
+        gilrs::Button::South => Some(ControlerButton::B),
+        gilrs::Button::East => Some(ControlerButton::A),
+        gilrs::Button::North => Some(ControlerButton::X),
+        gilrs::Button::West => Some(ControlerButton::Y),
+        gilrs::Button::C => None,
+        gilrs::Button::Z => None,
+        gilrs::Button::LeftTrigger => Some(ControlerButton::L),
+        gilrs::Button::LeftTrigger2 => None,
+        gilrs::Button::RightTrigger => Some(ControlerButton::R),
+        gilrs::Button::RightTrigger2 => None,
+        gilrs::Button::Select => Some(ControlerButton::Select),
+        gilrs::Button::Start => Some(ControlerButton::Start),
+        gilrs::Button::Mode => None,
+        gilrs::Button::LeftThumb => None,
+        gilrs::Button::RightThumb => None,
+        gilrs::Button::DPadUp => Some(ControlerButton::Up),
+        gilrs::Button::DPadDown => Some(ControlerButton::Down),
+        gilrs::Button::DPadLeft => Some(ControlerButton::Left),
+        gilrs::Button::DPadRight => Some(ControlerButton::Right),
+        gilrs::Button::Unknown => None,
     }
 }
 
-/// Emulator for the 8 Bit Pipelined CPU by James Sharman
+/// Emulator for jam-1 by James Sharman
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -731,37 +789,105 @@ struct Args {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use egui_wgpu::winit::Painter;
+    use egui_wgpu::WgpuConfiguration;
+    use winit::event::{Event, WindowEvent};
+    use winit::event_loop::EventLoop;
+    use winit::window::WindowBuilder;
+
     let args = Args::parse();
 
-    let window_setup = WindowSetup::default()
-        .title(&format!("{} v{}", TITLE, VERSION))
-        .vsync(false)
-        .srgb(true)
-        .samples(NumSamples::One);
-    let window_mode = WindowMode::default()
-        .resizable(true)
-        .dimensions(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32);
-    let builder = ContextBuilder::new(TITLE, AUTHOR)
-        .window_setup(window_setup)
-        .window_mode(window_mode);
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title(TITLE)
+        .with_inner_size(winit::dpi::PhysicalSize::new(1600, 900))
+        .build(&event_loop)?;
 
-    let (mut ctx, event_loop) = builder.build()?;
+    let ui_context = egui::Context::default();
+    let mut ui_state = egui_winit::State::new(&event_loop);
+    let mut ui_painter = Painter::new(WgpuConfiguration::default(), 1, 0);
+    unsafe { ui_painter.set_window(Some(&window)) };
 
-    const FONT_BYTES: &[u8] = include_bytes!("../res/SourceCodePro-Bold.ttf");
-    let font = Font::new_glyph_font_bytes(&mut ctx, FONT_BYTES)?;
+    const FONT: &[u8] = include_bytes!("../res/SourceCodePro-Bold.ttf");
+    const FONT_NAME: &str = "SourceCodePro";
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .font_data
+        .insert(FONT_NAME.to_owned(), egui::FontData::from_static(FONT));
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, FONT_NAME.to_owned());
+    ui_context.set_fonts(fonts);
+    ui_context.set_style(egui::Style {
+        override_font_id: Some(egui::FontId::monospace(14.0)),
+        ..Default::default()
+    });
 
     let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
     let sample_buffer = Arc::new(SegQueue::new());
     let sample_source = SampleSource::new(Arc::clone(&sample_buffer));
     stream_handle.play_raw(sample_source)?;
 
-    let mut state = EmuState::create(font, sample_buffer)?;
+    let mut gilrs = gilrs::Gilrs::new()?;
+
+    let mut state = EmuState::create(&ui_context, sample_buffer)?;
     state.reset();
 
     if let Some(path) = &args.run {
-        state.load_program(path);
+        state.load_program(path)?;
         state.execute_program()?;
     }
 
-    event::run(ctx, event_loop, state)
+    event_loop.run(move |event, _, control_flow| {
+        control_flow.set_poll();
+
+        match event {
+            Event::WindowEvent { window_id, event } if window_id == window.id() => {
+                if !ui_state.on_event(&ui_context, &event).consumed {
+                    match event {
+                        WindowEvent::CloseRequested => {
+                            control_flow.set_exit();
+                            state.quit().unwrap();
+                        }
+                        WindowEvent::Resized(size) => {
+                            ui_painter.on_window_resized(size.width, size.height)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Event::RedrawRequested(window_id) if window_id == window.id() => {
+                while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
+                    match event {
+                        gilrs::EventType::ButtonPressed(button, _) => state.button_down(button),
+                        gilrs::EventType::ButtonReleased(button, _) => state.button_up(button),
+                        _ => {}
+                    }
+                }
+
+                state.update().unwrap();
+
+                let ui_input = ui_state.take_egui_input(&window);
+                let ui_output = ui_context.run(ui_input, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| state.draw(ui));
+                });
+
+                ui_state.handle_platform_output(&window, &ui_context, ui_output.platform_output);
+
+                let ui_primitives = ui_context.tessellate(ui_output.shapes);
+                ui_painter.paint_and_update_textures(
+                    ui_context.pixels_per_point(),
+                    egui::Rgba::BLACK,
+                    &ui_primitives,
+                    &ui_output.textures_delta,
+                );
+            }
+            Event::RedrawEventsCleared => {
+                window.request_redraw();
+            }
+            _ => {}
+        }
+    });
 }

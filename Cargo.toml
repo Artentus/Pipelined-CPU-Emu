@@ -1,18 +1,20 @@
 [package]
-name = "pipelined_cpu_emu"
-version = "0.1.0"
-edition = "2018"
+name = "jam-1_emu"
+version = "0.2.0"
+edition = "2021"
 
 [dependencies]
-gfx = "0.18"
-gfx_device_gl = "0.16"
-ggez = "0.6"
-spin_sleep = "1.0.0"
-crossterm = "0.21.0"
-rodio = "0.14.0"
-crossbeam = "0.8.1"
-rfd = "0.8.2"
-msgbox = "0.7"
+winit = "0.27"
+wgpu = "0.14"
+egui-winit = "0.20"
+egui-wgpu = { version = "0.20", features = ["winit"] }
+egui = "0.20"
+spin_sleep = "1.0"
+crossterm = "0.21"
+rodio = "0.14"
+gilrs = "0.10"
+crossbeam = "0.8"
+rfd = "0.10"
 modular-bitfield = "0.11"
 bitflags = "1.3"
 clap = { version = "3.2", features = ["derive"] }

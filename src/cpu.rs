@@ -155,7 +155,7 @@ mod pipeline_data {
 use pipeline_data::*;
 
 bitflags! {
-    struct Flags : u8 {
+    pub struct Flags : u8 {
         const OVERFLOW = 1<<0;
         const SIGN = 1<<1;
         const ZERO = 1<<2;
@@ -341,7 +341,7 @@ impl Cpu {
     }
 
     #[inline]
-    fn pc(&self) -> u16 {
+    pub fn pc(&self) -> u16 {
         if self.flags.contains(Flags::PC_RA_FLIP) {
             self.pc_ra_1
         } else {
@@ -350,12 +350,67 @@ impl Cpu {
     }
 
     #[inline]
-    fn ra(&self) -> u16 {
+    pub fn ra(&self) -> u16 {
         if self.flags.contains(Flags::PC_RA_FLIP) {
             self.pc_ra_0
         } else {
             self.pc_ra_1
         }
+    }
+
+    #[inline]
+    pub fn sp(&self) -> u16 {
+        self.sp
+    }
+
+    #[inline]
+    pub fn si(&self) -> u16 {
+        self.si
+    }
+
+    #[inline]
+    pub fn di(&self) -> u16 {
+        self.di
+    }
+
+    #[inline]
+    pub fn tx(&self) -> u16 {
+        self.tx
+    }
+
+    #[inline]
+    pub fn a(&self) -> u8 {
+        self.a
+    }
+
+    #[inline]
+    pub fn b(&self) -> u8 {
+        self.b
+    }
+
+    #[inline]
+    pub fn c(&self) -> u8 {
+        self.c
+    }
+
+    #[inline]
+    pub fn d(&self) -> u8 {
+        self.d
+    }
+
+    #[inline]
+    pub fn tl(&self) -> u8 {
+        self.tx.to_le_bytes()[0]
+    }
+
+    #[inline]
+    pub fn th(&self) -> u8 {
+        self.tx.to_le_bytes()[1]
+    }
+
+    #[inline]
+    pub fn flags(&self) -> Flags {
+        self.flags
     }
 
     #[inline]
@@ -365,16 +420,6 @@ impl Cpu {
         } else {
             self.pc_ra_0 += 1;
         }
-    }
-
-    #[inline]
-    fn tl(&self) -> u8 {
-        self.tx.to_le_bytes()[0]
-    }
-
-    #[inline]
-    fn th(&self) -> u8 {
-        self.tx.to_le_bytes()[1]
     }
 
     #[inline]
