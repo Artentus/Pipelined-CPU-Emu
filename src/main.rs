@@ -15,13 +15,11 @@ use std::time::Duration;
 
 use clap::Parser;
 use crossbeam::queue::SegQueue;
-use crossterm::{cursor, event, style, terminal};
+use crossterm::{cursor, style, terminal};
 use crossterm::{ExecutableCommand, QueueableCommand};
 use spin_sleep::LoopHelper;
 
 const TITLE: &str = "JAM-1 Emulator";
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
 
 const INITIAL_CLOCK_RATE: f64 = 4_000_000.0; // 4 MHz
 const FRAME_RATE: f64 = 59.94047619047765; // Actual VGA 60 Hz frequency
@@ -237,6 +235,14 @@ impl EmuState {
 
         self.cpu.reset(CPU_RESET_PC);
         self.vga.reset();
+
+        self.clock_rate = INITIAL_CLOCK_RATE;
+        self.cycles_per_frame = self.clock_rate / FRAME_RATE;
+        self.whole_cycles_per_frame = self.cycles_per_frame as u64;
+        self.fract_cycles_per_frame = self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
+        self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
+        self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
+        self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
     }
 
     pub fn load_program(&mut self, path: &Path) -> io::Result<()> {
@@ -541,6 +547,50 @@ impl EmuState {
                         },
                     );
 
+                    ui.with_layout(
+                        Layout {
+                            main_dir: Direction::LeftToRight,
+                            ..*ui.layout()
+                        },
+                        |ui| {
+                            if ui
+                                .add_enabled(
+                                    self.running && (self.clock_rate > 1_000.0),
+                                    Button::new("-- Clock Speed"),
+                                )
+                                .clicked()
+                            {
+                                self.clock_rate /= 2.0;
+                                self.cycles_per_frame = self.clock_rate / FRAME_RATE;
+                                self.whole_cycles_per_frame = self.cycles_per_frame as u64;
+                                self.fract_cycles_per_frame =
+                                    self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
+                                self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
+                                self.audio_cycles_per_cpu_cylce =
+                                    AUDIO_CLOCK_RATE / self.clock_rate;
+                                self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
+                            }
+
+                            if ui
+                                .add_enabled(
+                                    self.running && (self.clock_rate < 16_000_000.0),
+                                    Button::new("++ Clock Speed"),
+                                )
+                                .clicked()
+                            {
+                                self.clock_rate *= 2.0;
+                                self.cycles_per_frame = self.clock_rate / FRAME_RATE;
+                                self.whole_cycles_per_frame = self.cycles_per_frame as u64;
+                                self.fract_cycles_per_frame =
+                                    self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
+                                self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
+                                self.audio_cycles_per_cpu_cylce =
+                                    AUDIO_CLOCK_RATE / self.clock_rate;
+                                self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
+                            }
+                        },
+                    );
+
                     ui.add_space(10.0);
                 });
 
@@ -682,77 +732,6 @@ impl EmuState {
         Ok(())
     }
 }
-
-//impl EventHandler<GameError> for EmuState {
-//
-//
-//    fn key_down_event(
-//        &mut self,
-//        ctx: &mut Context,
-//        keycode: KeyCode,
-//        _keymods: KeyMods,
-//        _repeat: bool,
-//    ) {
-//        match keycode {
-//            KeyCode::Escape => ggez::event::quit(ctx),
-//            KeyCode::Space => self.running = !self.running,
-//            KeyCode::D => self.show_debug_info = !self.show_debug_info,
-//            KeyCode::C => {
-//                if !self.running {
-//                    if let Err(_) = self.clock(1) {
-//                        ggez::event::quit(ctx);
-//                    }
-//                }
-//            }
-//            KeyCode::F => {
-//                if !self.running {
-//                    if let Err(_) = self.clock_frame() {
-//                        ggez::event::quit(ctx);
-//                    }
-//                }
-//            }
-//            KeyCode::R => {
-//                self.running = false;
-//                self.reset();
-//            }
-//            KeyCode::O => {
-//                if !self.running {
-//                    let dialog = rfd::FileDialog::new().add_filter("Binary files", &["bin"]);
-//                    if let Some(path) = dialog.pick_file() {
-//                        self.load_program(&path);
-//                    }
-//                }
-//            }
-//            KeyCode::NumpadAdd => {
-//                if self.clock_rate < 64_000_000.0 {
-//                    self.clock_rate *= 2.0;
-//                    self.cycles_per_frame = self.clock_rate / FRAME_RATE;
-//                    self.whole_cycles_per_frame = self.cycles_per_frame as u64;
-//                    self.fract_cycles_per_frame =
-//                        self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
-//                    self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
-//                    self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
-//                    self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
-//                }
-//            }
-//            KeyCode::NumpadSubtract => {
-//                if self.clock_rate > 1_000.0 {
-//                    self.clock_rate /= 2.0;
-//                    self.cycles_per_frame = self.clock_rate / FRAME_RATE;
-//                    self.whole_cycles_per_frame = self.cycles_per_frame as u64;
-//                    self.fract_cycles_per_frame =
-//                        self.cycles_per_frame - (self.whole_cycles_per_frame as f64);
-//                    self.cycles_per_baud = self.clock_rate / UART_BAUD_RATE;
-//                    self.audio_cycles_per_cpu_cylce = AUDIO_CLOCK_RATE / self.clock_rate;
-//                    self.vga_cycles_per_cpu_cycle = VGA_CLOCK_RATE / self.clock_rate;
-//                }
-//            }
-//            _ => {}
-//        }
-//    }
-//
-//
-//}
 
 fn map_button(button: gilrs::Button) -> Option<ControlerButton> {
     match button {
