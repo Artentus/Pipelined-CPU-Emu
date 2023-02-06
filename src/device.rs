@@ -446,16 +446,6 @@ impl Vga {
         &self.buffer
     }
 
-    #[inline]
-    pub fn h_offset(&self) -> u16 {
-        self.h_offset.into()
-    }
-
-    #[inline]
-    pub fn v_offset(&self) -> u16 {
-        self.v_offset.into()
-    }
-
     pub fn read_data(&self) -> u8 {
         const H_SYNC_START: u16 = SCREEN_WIDTH + 16; // Start of horizontal sync (inclusive)
         const H_SYNC_END: u16 = H_SYNC_START + 96; // End of horizontal sync (exclusive)

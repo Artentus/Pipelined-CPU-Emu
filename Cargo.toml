@@ -1,20 +1,43 @@
 [package]
-name = "jam-1_emu"
-version = "0.2.1"
+name = "jam1emu"
+version = "0.3.0"
 edition = "2021"
 
+[[bin]]
+name = "jam1emu"
+path = "src/main.rs"
+
+[lib]
+name = "jam1emu_lib"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[profile.dev]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
 [dependencies]
-winit = "0.27"
-wgpu = "0.14"
-egui-winit = "0.20"
-egui-wgpu = { version = "0.20", features = ["winit"] }
-egui = "0.20"
-spin_sleep = "1.0"
-crossterm = "0.21"
-rodio = "0.14"
+cpal = { version = "0.14", features = ["wasm-bindgen"] }
+rodio = { version = "0.16", default-features = false }
 gilrs = "0.10"
 crossbeam = "0.8"
-rfd = "0.10"
 modular-bitfield = "0.11"
 bitflags = "1.3"
 clap = { version = "3.2", features = ["derive"] }
+vte = "0.11"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+winit = "0.27"
+wgpu = { version = "0.14", features = ["webgl"] }
+egui-winit = { version = "0.20", default-features = false }
+egui-wgpu = { version = "0.20", features = ["winit"] }
+egui = "0.20"
+crossterm = "0.26"
+spin_sleep = "1.1"
+rfd = "0.10"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
