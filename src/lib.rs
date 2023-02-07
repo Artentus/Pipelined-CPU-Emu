@@ -442,9 +442,14 @@ mod wasm {
 
     impl vte::Perform for WebTerminal {
         fn print(&mut self, c: char) {
-            let mut buffer = [0; 4];
-            let s = c.encode_utf8(&mut buffer);
-            terminal::print(s);
+            if c == '\x7F' {
+                terminal::print("\x1B\x5B1D");
+                terminal::print("\x1B\x5B0K");
+            } else {
+                let mut buffer = [0; 4];
+                let s = c.encode_utf8(&mut buffer);
+                terminal::print(s);
+            }
         }
 
         fn execute(&mut self, byte: u8) {
