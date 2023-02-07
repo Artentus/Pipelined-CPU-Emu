@@ -11,9 +11,16 @@ struct NativeTerminal {
 }
 
 impl vte::Perform for NativeTerminal {
-    #[inline]
     fn print(&mut self, c: char) {
-        self.stdout.queue(style::Print(c)).unwrap();
+        use style::*;
+        use terminal::*;
+
+        if c == '\x7F' {
+            self.stdout.queue(cursor::MoveLeft(1)).unwrap();
+            self.stdout.queue(Clear(ClearType::UntilNewLine)).unwrap();
+        } else {
+            self.stdout.queue(Print(c)).unwrap();
+        }
     }
 
     fn execute(&mut self, byte: u8) {
@@ -23,6 +30,9 @@ impl vte::Perform for NativeTerminal {
             }
             b'\n' => {
                 self.stdout.queue(cursor::MoveDown(1)).unwrap();
+            }
+            b'\x08' => {
+                self.stdout.queue(cursor::MoveLeft(1)).unwrap();
             }
             _ => {}
         }
@@ -348,6 +358,9 @@ fn process_terminal_input(system: &mut System<NativeTerminal>) {
                     KeyCode::Enter => {
                         system.write_char('\r');
                         //system.write_char('\n');
+                    }
+                    KeyCode::Backspace => {
+                        system.write_char('\x7F');
                     }
                     KeyCode::Left => {
                         system.write_char(ESC_SEQ[0]);
