@@ -55,17 +55,17 @@
 /******/ 		"./node_modules/@artentus/jam1emu/jam1emu_lib_bg.wasm": function() {
 /******/ 			return {
 /******/ 				"./jam1emu_lib_bg.js": {
-/******/ 					"__wbg_print_af3404595eb45827": function(p0i32,p1i32) {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_print_af3404595eb45827"](p0i32,p1i32);
+/******/ 					"__wbg_print_1814c25f33a1ba2c": function(p0i32,p1i32) {
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_print_1814c25f33a1ba2c"](p0i32,p1i32);
+/******/ 					},
+/******/ 					"__wbg_readuartdata_81ee4f3721e72fea": function(p0i32) {
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_readuartdata_81ee4f3721e72fea"](p0i32);
 /******/ 					},
 /******/ 					"__wbindgen_cb_drop": function(p0i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_cb_drop"](p0i32);
 /******/ 					},
 /******/ 					"__wbindgen_object_drop_ref": function(p0i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_object_drop_ref"](p0i32);
-/******/ 					},
-/******/ 					"__wbg_readuartdata_46032981600bfcea": function(p0i32) {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_readuartdata_46032981600bfcea"](p0i32);
 /******/ 					},
 /******/ 					"__wbindgen_number_get": function(p0i32,p1i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_number_get"](p0i32,p1i32);
@@ -211,13 +211,13 @@
 /******/ 					"__wbindgen_throw": function(p0i32,p1i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_throw"](p0i32,p1i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper394": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_closure_wrapper394"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper395": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_closure_wrapper395"](p0i32,p1i32,p2i32);
 /******/ 					}
 /******/ 				},
-/******/ 				"./snippets/jam1emu-f226d33b58ce4da4/terminal.js": {
+/******/ 				"./snippets/jam1emu-2eb22ae328595009/terminal.js": {
 /******/ 					"attach": function() {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/snippets/jam1emu-f226d33b58ce4da4/terminal.js"].exports["attach"]();
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/snippets/jam1emu-2eb22ae328595009/terminal.js"].exports["attach"]();
 /******/ 					}
 /******/ 				}
 /******/ 			};
@@ -320,7 +320,7 @@
 /******/ 				promises.push(installedWasmModuleData);
 /******/ 			else {
 /******/ 				var importObject = wasmImportObjects[wasmModuleId]();
-/******/ 				var req = fetch(__webpack_require__.p + "" + {"./node_modules/@artentus/jam1emu/jam1emu_lib_bg.wasm":"50f4022245e46b80db16"}[wasmModuleId] + ".module.wasm");
+/******/ 				var req = fetch(__webpack_require__.p + "" + {"./node_modules/@artentus/jam1emu/jam1emu_lib_bg.wasm":"49666c8cea1c50aa2290"}[wasmModuleId] + ".module.wasm");
 /******/ 				var promise;
 /******/ 				if(importObject instanceof Promise && typeof WebAssembly.compileStreaming === 'function') {
 /******/ 					promise = Promise.all([WebAssembly.compileStreaming(req), importObject]).then(function(items) {
