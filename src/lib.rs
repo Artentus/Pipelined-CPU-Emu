@@ -113,6 +113,11 @@ fn map_button(button: gilrs::Button) -> Option<ControlerButton> {
     }
 }
 
+struct AudioState {
+    _audio_stream: rodio::OutputStream,
+    sample_buffer: Arc<SegQueue<f32>>,
+}
+
 pub struct System<Term: Terminal> {
     cpu: Cpu,
     memory: Memory,
@@ -140,17 +145,13 @@ pub struct System<Term: Terminal> {
     output_queue: VecDeque<u8>,
     terminal_parser: vte::Parser,
     terminal: Term,
-    _audio_stream: rodio::OutputStream,
-    audio_handle: rodio::OutputStreamHandle,
-    sample_buffer: Option<Arc<SegQueue<f32>>>,
+    audio_state: Option<AudioState>,
     gilrs: gilrs::Gilrs,
     memory_view: Vec<u8>,
 }
 
 impl<Term: Terminal> System<Term> {
     pub fn create(terminal: Term) -> Self {
-        let (_audio_stream, audio_handle) = rodio::OutputStream::try_default().unwrap();
-
         let mut system = Self {
             cpu: Cpu::new(),
             memory: Memory::new(),
@@ -178,9 +179,7 @@ impl<Term: Terminal> System<Term> {
             output_queue: VecDeque::new(),
             terminal_parser: vte::Parser::new(),
             terminal,
-            _audio_stream,
-            audio_handle,
-            sample_buffer: None,
+            audio_state: None,
             gilrs: gilrs::Gilrs::new().unwrap(),
             memory_view: Vec::new(),
         };
@@ -338,14 +337,19 @@ impl<Term: Terminal> System<Term> {
     }
 
     fn sample_buffer(&mut self) -> Arc<SegQueue<f32>> {
-        if let Some(sample_buffer) = &self.sample_buffer {
-            Arc::clone(sample_buffer)
+        if let Some(audio_state) = &self.audio_state {
+            Arc::clone(&audio_state.sample_buffer)
         } else {
+            let (_audio_stream, audio_handle) = rodio::OutputStream::try_default().unwrap();
+
             let sample_buffer = Arc::new(SegQueue::new());
-            self.sample_buffer = Some(Arc::clone(&sample_buffer));
+            self.audio_state = Some(AudioState {
+                _audio_stream,
+                sample_buffer: Arc::clone(&sample_buffer),
+            });
 
             let sample_source = SampleSource::new(Arc::clone(&sample_buffer));
-            self.audio_handle.play_raw(sample_source).unwrap();
+            audio_handle.play_raw(sample_source).unwrap();
 
             sample_buffer
         }
