@@ -723,7 +723,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     });
 
-    let mut system = System::create(NativeTerminal::new())?;
+    let mut system = System::create(NativeTerminal::new());
     system.reset();
     let mut state = EmuState::create(&ui_context);
 

@@ -141,17 +141,15 @@ pub struct System<Term: Terminal> {
     terminal_parser: vte::Parser,
     terminal: Term,
     _audio_stream: rodio::OutputStream,
-    sample_buffer: Arc<SegQueue<f32>>,
+    audio_handle: rodio::OutputStreamHandle,
+    sample_buffer: Option<Arc<SegQueue<f32>>>,
     gilrs: gilrs::Gilrs,
     memory_view: Vec<u8>,
 }
 
 impl<Term: Terminal> System<Term> {
-    pub fn create(terminal: Term) -> Result<Self, Box<dyn std::error::Error>> {
-        let (_audio_stream, stream_handle) = rodio::OutputStream::try_default()?;
-        let sample_buffer = Arc::new(SegQueue::new());
-        let sample_source = SampleSource::new(Arc::clone(&sample_buffer));
-        stream_handle.play_raw(sample_source)?;
+    pub fn create(terminal: Term) -> Self {
+        let (_audio_stream, audio_handle) = rodio::OutputStream::try_default().unwrap();
 
         let mut system = Self {
             cpu: Cpu::new(),
@@ -181,14 +179,15 @@ impl<Term: Terminal> System<Term> {
             terminal_parser: vte::Parser::new(),
             terminal,
             _audio_stream,
-            sample_buffer,
-            gilrs: gilrs::Gilrs::new()?,
+            audio_handle,
+            sample_buffer: None,
+            gilrs: gilrs::Gilrs::new().unwrap(),
             memory_view: Vec::new(),
         };
 
         system.recalculate_cycles();
 
-        Ok(system)
+        system
     }
 
     fn recalculate_cycles(&mut self) {
@@ -338,6 +337,20 @@ impl<Term: Terminal> System<Term> {
         self.uart.host_write(b'\r');
     }
 
+    fn sample_buffer(&mut self) -> Arc<SegQueue<f32>> {
+        if let Some(sample_buffer) = &self.sample_buffer {
+            Arc::clone(sample_buffer)
+        } else {
+            let sample_buffer = Arc::new(SegQueue::new());
+            self.sample_buffer = Some(Arc::clone(&sample_buffer));
+
+            let sample_source = SampleSource::new(Arc::clone(&sample_buffer));
+            self.audio_handle.play_raw(sample_source).unwrap();
+
+            sample_buffer
+        }
+    }
+
     pub fn clock(&mut self, n: u64) -> bool {
         while let Some(gilrs::Event { event, .. }) = self.gilrs.next_event() {
             match event {
@@ -378,13 +391,13 @@ impl<Term: Terminal> System<Term> {
             let whole_audio_cycles = self.fractional_audio_cycles as u32;
             self.fractional_audio_cycles -= whole_audio_cycles as f64;
 
+            let sample_buffer = self.sample_buffer();
             for _ in 0..whole_audio_cycles {
                 let sample = self.audio.clock();
                 self.audio_cycles += 1.0;
                 while self.audio_cycles >= AUDIO_CYCLES_PER_SAMPLE {
                     self.audio_cycles -= AUDIO_CYCLES_PER_SAMPLE;
-
-                    self.sample_buffer.push(sample);
+                    sample_buffer.push(sample);
                 }
             }
 
@@ -525,7 +538,7 @@ mod wasm {
     impl System {
         pub fn create() -> Self {
             Self {
-                inner: super::System::create(WebTerminal::new()).unwrap(),
+                inner: super::System::create(WebTerminal::new()),
             }
         }
 
