@@ -8,6 +8,8 @@ pub struct Memory {
     palette_conflict: bool,
     last_palette_data: Color,
     palette_high: u8,
+    tile_data_conflict: bool,
+    last_tile_data: u8,
 }
 impl Memory {
     const MAP_RANGE_START: u16 = 0x8B00;
@@ -22,6 +24,10 @@ impl Memory {
     const PALETTE_START: u16 = 0x8C00;
     const PALETTE_END: u16 = 0x9000;
 
+    const TILE_DATA_START: u16 = 0xA000;
+    const TILE_DATA_END: u16 = 0xC000;
+    const TILE_DATA_MASK: u16 = 0x1FFF;
+
     #[inline]
     #[allow(dead_code)]
     pub fn new() -> Self {
@@ -33,6 +39,8 @@ impl Memory {
             palette_conflict: false,
             last_palette_data: Color::BLACK,
             palette_high: 0,
+            tile_data_conflict: false,
+            last_tile_data: 0,
         }
     }
 
@@ -84,6 +92,8 @@ impl Memory {
                 if (addr & 0x3) == 0x3 {
                     self.palette_high = value & 0x1F;
                 }
+            } else if (addr >= Self::TILE_DATA_START) && (addr < Self::TILE_DATA_END) {
+                self.tile_data_conflict = true;
             }
 
             self.data[addr as usize] = value;
@@ -119,10 +129,23 @@ impl Memory {
         }
     }
 
+    pub fn tile_data_read(&mut self, addr: u16) -> u8 {
+        // If we currently have a bus conflict we have to return the last value that was read by the VGA.
+        if self.tile_data_conflict {
+            self.last_tile_data
+        } else {
+            let addr = ((addr & Self::TILE_DATA_MASK) + Self::TILE_DATA_START) as usize;
+            let data = self.data[addr];
+            self.last_tile_data = data;
+            data
+        }
+    }
+
     #[inline]
     pub fn reset_vga_conflict(&mut self) {
         self.framebuffer_conflict = false;
         self.palette_conflict = false;
+        self.tile_data_conflict = false;
     }
 }
 
@@ -565,9 +588,16 @@ impl Vga {
             if (self.h_counter < SCREEN_WIDTH) && (self.v_counter < SCREEN_HEIGHT) {
                 let h_addr = (self.h_pixel >> 3) & 0x7F;
                 let v_addr = (self.v_pixel >> 3) & 0x3F;
-                let addr = h_addr | (v_addr << 7);
+                let tile_x = self.h_pixel & 0x7;
+                let tile_y = self.v_pixel & 0x7;
 
-                let palette_index = mem.framebuffer_read(addr);
+                let framebuffer_addr = h_addr | (v_addr << 7);
+                let tile_index = mem.framebuffer_read(framebuffer_addr);
+
+                let tile_addr = ((tile_index as u16) << 5) | (tile_y << 2) | (tile_x >> 1);
+                let nibble_shift = (tile_x & 0x1) * 4;
+                let palette_index = (mem.tile_data_read(tile_addr) >> nibble_shift) & 0xF;
+
                 let color = mem.palette_read(palette_index);
 
                 self.buffer
