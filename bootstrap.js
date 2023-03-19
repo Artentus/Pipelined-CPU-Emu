@@ -55,17 +55,17 @@
 /******/ 		"./node_modules/@artentus/jam1emu/jam1emu_lib_bg.wasm": function() {
 /******/ 			return {
 /******/ 				"./jam1emu_lib_bg.js": {
-/******/ 					"__wbg_print_1814c25f33a1ba2c": function(p0i32,p1i32) {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_print_1814c25f33a1ba2c"](p0i32,p1i32);
-/******/ 					},
-/******/ 					"__wbg_readuartdata_81ee4f3721e72fea": function(p0i32) {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_readuartdata_81ee4f3721e72fea"](p0i32);
+/******/ 					"__wbindgen_object_drop_ref": function(p0i32) {
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_object_drop_ref"](p0i32);
 /******/ 					},
 /******/ 					"__wbindgen_cb_drop": function(p0i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_cb_drop"](p0i32);
 /******/ 					},
-/******/ 					"__wbindgen_object_drop_ref": function(p0i32) {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_object_drop_ref"](p0i32);
+/******/ 					"__wbg_print_51e3e6804f5faaf4": function(p0i32,p1i32) {
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_print_51e3e6804f5faaf4"](p0i32,p1i32);
+/******/ 					},
+/******/ 					"__wbg_readuartdata_1c4ade31d2ddd0d4": function(p0i32) {
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_readuartdata_1c4ade31d2ddd0d4"](p0i32);
 /******/ 					},
 /******/ 					"__wbindgen_number_get": function(p0i32,p1i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_number_get"](p0i32,p1i32);
@@ -154,14 +154,14 @@
 /******/ 					"__wbg_connect_463d4300ff833991": function(p0i32,p1i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_connect_463d4300ff833991"](p0i32,p1i32);
 /******/ 					},
-/******/ 					"__wbg_copyToChannel_e683ef3e184292ab": function(p0i32,p1i32,p2i32,p3i32) {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_copyToChannel_e683ef3e184292ab"](p0i32,p1i32,p2i32,p3i32);
-/******/ 					},
 /******/ 					"__wbg_instanceof_DomException_c2b4ae110dc047f8": function(p0i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_instanceof_DomException_c2b4ae110dc047f8"](p0i32);
 /******/ 					},
 /******/ 					"__wbg_message_a7af3ee0cc0fe28d": function(p0i32,p1i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_message_a7af3ee0cc0fe28d"](p0i32,p1i32);
+/******/ 					},
+/******/ 					"__wbg_copyToChannel_e683ef3e184292ab": function(p0i32,p1i32,p2i32,p3i32) {
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_copyToChannel_e683ef3e184292ab"](p0i32,p1i32,p2i32,p3i32);
 /******/ 					},
 /******/ 					"__wbg_get_57245cc7d7c7619d": function(p0i32,p1i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbg_get_57245cc7d7c7619d"](p0i32,p1i32);
@@ -211,13 +211,13 @@
 /******/ 					"__wbindgen_throw": function(p0i32,p1i32) {
 /******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_throw"](p0i32,p1i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper395": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_closure_wrapper395"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper402": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/jam1emu_lib_bg.js"].exports["__wbindgen_closure_wrapper402"](p0i32,p1i32,p2i32);
 /******/ 					}
 /******/ 				},
-/******/ 				"./snippets/jam1emu-2eb22ae328595009/terminal.js": {
+/******/ 				"./snippets/jam1emu-cb4d31cfe706505d/terminal.js": {
 /******/ 					"attach": function() {
-/******/ 						return installedModules["./node_modules/@artentus/jam1emu/snippets/jam1emu-2eb22ae328595009/terminal.js"].exports["attach"]();
+/******/ 						return installedModules["./node_modules/@artentus/jam1emu/snippets/jam1emu-cb4d31cfe706505d/terminal.js"].exports["attach"]();
 /******/ 					}
 /******/ 				}
 /******/ 			};
@@ -320,7 +320,7 @@
 /******/ 				promises.push(installedWasmModuleData);
 /******/ 			else {
 /******/ 				var importObject = wasmImportObjects[wasmModuleId]();
-/******/ 				var req = fetch(__webpack_require__.p + "" + {"./node_modules/@artentus/jam1emu/jam1emu_lib_bg.wasm":"49666c8cea1c50aa2290"}[wasmModuleId] + ".module.wasm");
+/******/ 				var req = fetch(__webpack_require__.p + "" + {"./node_modules/@artentus/jam1emu/jam1emu_lib_bg.wasm":"f5b89d05d93d977c94d7"}[wasmModuleId] + ".module.wasm");
 /******/ 				var promise;
 /******/ 				if(importObject instanceof Promise && typeof WebAssembly.compileStreaming === 'function') {
 /******/ 					promise = Promise.all([WebAssembly.compileStreaming(req), importObject]).then(function(items) {
