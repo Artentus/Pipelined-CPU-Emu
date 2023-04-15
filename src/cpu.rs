@@ -3,7 +3,7 @@ use modular_bitfield::error::InvalidBitPattern;
 use modular_bitfield::*;
 use std::fmt::Display;
 
-use crate::{Audio, Controler, Lcd, Memory, Uart, Vga};
+use crate::{Audio, Controler, Gpio, Memory, Uart, Vga};
 
 const PIPE_ROM_SIZE: usize = 0x8000;
 type PipeRom = &'static [u8; PIPE_ROM_SIZE];
@@ -72,7 +72,7 @@ enum MainBusAssertDevice {
     IoVga = 10,
     IoUartData = 11,
     IoUartCtrl = 12,
-    IoLcdCommand = 14,
+    IoGpio = 14,
     MemBridge = 15,
 }
 
@@ -91,8 +91,7 @@ enum MainBusLoadDevice {
     IoVga = 10,
     IoUartData = 11,
     IoUartCtrl = 12,
-    IoLcdData = 13,
-    IoLcdCommand = 14,
+    IoGpio = 14,
     MemBridge = 15,
 }
 
@@ -484,7 +483,7 @@ impl Cpu {
     pub fn clock(
         &mut self,
         memory: &mut Memory,
-        lcd: &mut Lcd,
+        gpio: &mut Gpio,
         uart: &mut Uart,
         audio: &mut Audio,
         vga: &mut Vga,
@@ -552,7 +551,7 @@ impl Cpu {
             MainBusAssertDevice::IoVga => vga.read_data(),
             MainBusAssertDevice::IoUartData => uart.read_data(),
             MainBusAssertDevice::IoUartCtrl => uart.read_ctrl(),
-            MainBusAssertDevice::IoLcdCommand => lcd.read_cmd(),
+            MainBusAssertDevice::IoGpio => gpio.read(),
             MainBusAssertDevice::MemBridge => mem_data,
         };
 
@@ -569,8 +568,7 @@ impl Cpu {
             MainBusLoadDevice::IoVga => {}
             MainBusLoadDevice::IoUartData => uart.write_data(main_bus),
             MainBusLoadDevice::IoUartCtrl => {}
-            MainBusLoadDevice::IoLcdData => lcd.write_data(main_bus),
-            MainBusLoadDevice::IoLcdCommand => lcd.write_cmd(main_bus),
+            MainBusLoadDevice::IoGpio => gpio.write(main_bus),
             MainBusLoadDevice::MemBridge => memory.write(vga, address, main_bus),
         }
 

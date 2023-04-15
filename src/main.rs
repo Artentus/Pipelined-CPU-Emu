@@ -1,3 +1,6 @@
+mod ansi_escaping;
+mod syntax_highlighting;
+
 use clap::Parser;
 use crossterm::{cursor, style, terminal, ExecutableCommand, QueueableCommand};
 use jam1emu_lib::*;
@@ -263,7 +266,7 @@ impl vte::Perform for NativeTerminal {
                                     self.stdout.queue(SetBackgroundColor(color)).unwrap();
                                 }
                             }
-                            49 => set_fg_color!(Reset),
+                            49 => set_bg_color!(Reset),
 
                             90 => set_fg_color!(DarkGrey),
                             91 => set_fg_color!(Red),
@@ -399,6 +402,8 @@ struct EmuState {
     loop_helper: LoopHelper,
     fps: f64,
     vga_texture: egui::TextureHandle,
+    code: String,
+    assembler_output: String,
 }
 
 impl EmuState {
@@ -418,6 +423,8 @@ impl EmuState {
             loop_helper,
             fps: 0.0,
             vga_texture,
+            code: String::new(),
+            assembler_output: String::new(),
         }
     }
 
@@ -446,6 +453,135 @@ impl EmuState {
         use egui::style::*;
         use egui::*;
 
+        SidePanel::new(Side::Right, "code")
+            .default_width(400.0)
+            .show_inside(ui, |ui| {
+                TopBottomPanel::new(TopBottomSide::Bottom, "output")
+                    .show_separator_line(false)
+                    .show_inside(ui, |ui| {
+                        if ui
+                            .add_enabled(!self.running, Button::new("Assemble"))
+                            .clicked()
+                        {
+                            match assembler::assemble_code(&self.code, false) {
+                                Ok((base_addr, data)) => {
+                                    if let Err(_) = system.load_program(base_addr, &data) {
+                                        self.assembler_output =
+                                            "\x1B\x5B1m\x1B\x5B31mError\x1B\x5B39m: assembled binary is too big\x1B\x5B22m".to_owned();
+                                    } else {
+                                        self.assembler_output = String::new();
+                                    }
+                                }
+                                Err(output) => {
+                                    self.assembler_output = output;
+                                }
+                            }
+                        }
+
+                        Frame::dark_canvas(ui.style()).show(ui, |ui| {
+                            ScrollArea::both()
+                                .min_scrolled_height(200.0)
+                                .show(ui, |ui| {
+                                    let mut layouter =
+                                        |ui: &Ui, string: &str, _: f32| {
+                                            let layout_job =
+                                                ansi_escaping::highlight(
+                                                    ui.ctx(),
+                                                    string,
+                                                );
+                                            ui.fonts().layout_job(layout_job)
+                                        };
+
+                                    TextEdit::multiline(&mut self.assembler_output.as_str())
+                                        .desired_width(f32::INFINITY)
+                                        .layouter(&mut layouter)
+                                        .show(ui);
+
+                                    ui.allocate_space(ui.available_size());
+                                });
+                        });
+                    });
+
+                CentralPanel::default().show_inside(ui, |ui| {
+                    ui.allocate_ui(ui.available_size(), |ui| {
+                        Frame::dark_canvas(ui.style())
+                            .inner_margin(Margin {
+                                left: 4.0,
+                                right: 4.0,
+                                top: 3.0,
+                                bottom: 7.0,
+                            })
+                            .show(ui, |ui| {
+                                ScrollArea::vertical().show(ui, |ui| {
+                                    ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                                        // `split` instead of `lines` to preserve the final newline
+                                        let code_line_count = self.code.split('\n').count().max(1);
+
+                                        ui.vertical(|ui| {
+                                            let max_line_number_size =
+                                                code_line_count.ilog10() as usize + 1;
+                                            let mut text = String::with_capacity(
+                                                code_line_count * (max_line_number_size + 1),
+                                            );
+                                            for line_number in 1..=code_line_count {
+                                                use std::fmt::Write;
+
+                                                if line_number > 1 {
+                                                    writeln!(text).unwrap();
+                                                }
+
+                                                write!(
+                                                    text,
+                                                    "{line_number:>width$}",
+                                                    width = max_line_number_size,
+                                                )
+                                                .unwrap();
+                                            }
+
+                                            Frame::none().inner_margin(Margin::same(2.0)).show(
+                                                ui,
+                                                |ui| {
+                                                    ui.label(WidgetText::from(text).weak());
+                                                },
+                                            );
+                                        });
+
+                                        Frame::none()
+                                            .inner_margin(Margin::symmetric(4.0, 0.0))
+                                            .show(ui, |ui| {
+                                                ScrollArea::horizontal().show(ui, |ui| {
+                                                    let mut layouter =
+                                                        |ui: &Ui, string: &str, _: f32| {
+                                                            let layout_job =
+                                                                syntax_highlighting::highlight(
+                                                                    ui.ctx(),
+                                                                    string,
+                                                                );
+                                                            ui.fonts().layout_job(layout_job)
+                                                        };
+
+                                                    TextEdit::multiline(&mut self.code)
+                                                        .lock_focus(true)
+                                                        .desired_width(f32::INFINITY)
+                                                        .desired_rows(code_line_count)
+                                                        .frame(false)
+                                                        .layouter(&mut layouter)
+                                                        .show(ui);
+
+                                                    ui.allocate_space(
+                                                        ui.available_size() - Vec2::new(8.0, 4.0),
+                                                    );
+                                                });
+                                            });
+                                    });
+
+                                    ui.allocate_space(ui.available_size());
+                                });
+                            });
+                    });
+                });
+            });
+
         SidePanel::new(Side::Right, "ctrl")
             .show_separator_line(false)
             .resizable(false)
@@ -460,7 +596,7 @@ impl EmuState {
                         let dialog = rfd::FileDialog::new().add_filter("Binary files", &["bin"]);
                         if let Some(program) = dialog.pick_file() {
                             let data = std::fs::read(program).unwrap();
-                            system.load_program(&data);
+                            system.load_program(0, &data).expect("binary is too big");
                         }
                     }
 
@@ -706,20 +842,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ui_painter = Painter::new(gpu_config, 1, 0);
     unsafe { ui_painter.set_window(Some(&window)) };
 
-    const FONT: &[u8] = include_bytes!("../res/SourceCodePro-Bold.ttf");
+    const FONT: &[u8] = include_bytes!("../res/SourceCodePro-Regular.ttf");
     const FONT_NAME: &str = "SourceCodePro";
-    let mut fonts = egui::FontDefinitions::default();
+    let mut fonts = egui::FontDefinitions::empty();
     fonts
         .font_data
         .insert(FONT_NAME.to_owned(), egui::FontData::from_static(FONT));
     fonts
         .families
-        .entry(egui::FontFamily::Monospace)
+        .entry(egui::FontFamily::Proportional)
         .or_default()
         .insert(0, FONT_NAME.to_owned());
     ui_context.set_fonts(fonts);
     ui_context.set_style(egui::Style {
-        override_font_id: Some(egui::FontId::monospace(14.0)),
+        override_font_id: Some(egui::FontId::proportional(14.0)),
         ..Default::default()
     });
 
@@ -729,7 +865,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
     if let Some(program) = args.run {
-        system.load_program(&std::fs::read(program)?);
+        system
+            .load_program(0, &std::fs::read(program)?)
+            .expect("binary is too big");
         system.execute_program();
     }
 

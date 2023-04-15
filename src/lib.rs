@@ -1,11 +1,16 @@
 #![feature(new_uninit)]
 #![feature(bigint_helper_methods)]
+#![feature(iter_next_chunk)]
+#![feature(trait_alias)]
+#![feature(int_roundings)]
+#![feature(try_trait_v2)]
 
+pub mod assembler;
 pub mod cpu;
 mod device;
 
 use cpu::Cpu;
-use device::{Audio, Controler, ControlerButton, Lcd, Memory, Uart, Vga};
+use device::{Audio, Controler, ControlerButton, Gpio, Memory, Uart, Vga};
 
 use crossbeam::queue::SegQueue;
 use std::collections::VecDeque;
@@ -121,7 +126,7 @@ struct AudioState {
 pub struct System<Term: Terminal> {
     cpu: Cpu,
     memory: Memory,
-    lcd: Lcd,
+    gpio: Gpio,
     uart: Uart,
     audio: Audio,
     vga: Vga,
@@ -155,7 +160,7 @@ impl<Term: Terminal> System<Term> {
         let mut system = Self {
             cpu: Cpu::new(),
             memory: Memory::new(),
-            lcd: Lcd::new(),
+            gpio: Gpio::new(),
             uart: Uart::new(),
             audio: Audio::new(),
             vga: Vga::new(),
@@ -273,9 +278,14 @@ impl<Term: Terminal> System<Term> {
         }
     }
 
-    pub fn load_program(&mut self, data: &[u8]) {
-        assert!(data.len() <= 0xE000);
+    pub fn load_program(&mut self, base_addr: u16, data: &[u8]) -> Result<(), ()> {
+        if ((base_addr as usize) + data.len()) >= 0xE000 {
+            return Err(());
+        }
+
         self.memory.init_region(data, 0);
+        self.update_memory_view();
+        Ok(())
     }
 
     fn update_memory_view(&mut self) {
@@ -299,7 +309,7 @@ impl<Term: Terminal> System<Term> {
             self.cpu
                 .clock(
                     &mut self.memory,
-                    &mut self.lcd,
+                    &mut self.gpio,
                     &mut self.uart,
                     &mut self.audio,
                     &mut self.vga,
@@ -370,7 +380,7 @@ impl<Term: Terminal> System<Term> {
                 .cpu
                 .clock(
                     &mut self.memory,
-                    &mut self.lcd,
+                    &mut self.gpio,
                     &mut self.uart,
                     &mut self.audio,
                     &mut self.vga,
@@ -622,8 +632,8 @@ mod wasm {
             self.inner.memory_view().to_vec()
         }
 
-        pub fn load_program(&mut self, data: &[u8]) {
-            self.inner.load_program(data);
+        pub fn load_program(&mut self, base_addr: u16, data: &[u8]) -> bool {
+            self.inner.load_program(base_addr, data).is_ok()
         }
 
         pub fn clock(&mut self, n: u64) -> bool {
@@ -640,6 +650,19 @@ mod wasm {
             }
 
             self.inner.clock_frame()
+        }
+
+        pub fn assemble(&mut self, code: &str) -> String {
+            match super::assembler::assemble_code(code, false) {
+                Ok((base_addr, data)) => {
+                    if let Err(_) = self.inner.load_program(base_addr, &data) {
+                        "\x1B\x5B1m\x1B\x5B31mError\x1B\x5B39m: assembled binary is too big\x1B\x5B22m".to_owned()
+                    } else {
+                        "".to_owned()
+                    }
+                }
+                Err(output) => output,
+            }
         }
     }
 }

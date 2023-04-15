@@ -11,6 +11,7 @@ pub struct Memory {
     tile_data_conflict: bool,
     last_tile_data: u8,
 }
+
 impl Memory {
     const MAP_RANGE_START: u16 = 0x8B00;
     const MAP_RANGE_END: u16 = 0x8C00;
@@ -149,20 +150,19 @@ impl Memory {
     }
 }
 
-pub struct Lcd {}
-impl Lcd {
+pub struct Gpio {}
+
+impl Gpio {
     #[inline]
     pub const fn new() -> Self {
         Self {}
     }
 
-    pub fn write_cmd(&mut self, _value: u8) {}
+    pub fn write(&mut self, _value: u8) {}
 
-    pub fn read_cmd(&mut self) -> u8 {
+    pub fn read(&mut self) -> u8 {
         0
     }
-
-    pub fn write_data(&mut self, _value: u8) {}
 }
 
 struct Queue<T, const N: usize> {
@@ -171,6 +171,7 @@ struct Queue<T, const N: usize> {
     end: usize,
     len: usize,
 }
+
 impl<T, const N: usize> Queue<T, N> {
     const INIT: Option<T> = None;
 
@@ -225,6 +226,7 @@ pub struct Uart {
     receive_fifo: Queue<u8, 8>,
     transmit_fifo: Queue<u8, 8>,
 }
+
 impl Uart {
     #[inline]
     pub const fn new() -> Self {
@@ -273,6 +275,7 @@ struct SquareWaveChannel {
     counter: u16,
     state: f32,
 }
+
 impl SquareWaveChannel {
     #[inline]
     const fn new() -> Self {
@@ -317,6 +320,7 @@ pub struct Audio {
     channel_index: u8,
     low_data: u8,
 }
+
 impl Audio {
     #[inline]
     pub const fn new() -> Self {
@@ -382,6 +386,7 @@ impl Audio {
 pub struct Color {
     pub channels: [u8; 4],
 }
+
 impl Color {
     pub const BLACK: Color = Color::from_rgb(u8::MIN, u8::MIN, u8::MIN);
 
@@ -398,6 +403,7 @@ pub struct PixelBuffer {
     width: usize,
     height: usize,
 }
+
 impl PixelBuffer {
     #[inline]
     pub fn new(width: usize, height: usize) -> Self {
@@ -438,6 +444,7 @@ pub struct Vga {
     v_offset: u16,
     update_vscroll: bool,
 }
+
 impl Vga {
     #[inline]
     pub fn new() -> Self {
@@ -628,6 +635,7 @@ pub struct Controler {
     high: u8,
     state: bool,
 }
+
 impl Controler {
     pub fn new() -> Self {
         Self {

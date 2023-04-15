@@ -1,6 +1,6 @@
 import { Terminal } from 'xterm';
 
-const term = new Terminal();
+const term = new Terminal({ scrollback: 10000 });
 
 export function attach() {
     term.open(document.getElementById('terminal_parent'));
