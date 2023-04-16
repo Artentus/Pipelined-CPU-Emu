@@ -136,6 +136,10 @@ const screenHeight = 480;
 
 const terminalParent = document.getElementById('terminal_parent');
 const mainRight = document.getElementById('main_right');
+const controls = document.getElementById('controls');
+const registerView = document.getElementById('register_view');
+const memoryView = document.getElementById('memory_view');
+const memoryScrollArea = document.getElementById('memory_scroll_area');
 const mainEditor = document.getElementById('main_editor');
 const assemblerOutput = document.getElementById("assembler_output");
 const canvas = document.getElementById('canvas');
@@ -308,6 +312,25 @@ assembleButton.onclick = () => {
     }
 };
 
+function resize() {
+    memoryScrollArea.style.height = Math.max(200, (window.innerHeight - memoryView.offsetHeight - registerView.offsetHeight - controls.offsetHeight - 10)) + "px";
+    document.getElementById("code_editor").style.height = Math.max(200, (document.documentElement.clientHeight - assemblerOutput.clientHeight - 16)) + "px";
+
+    // Position the VGA output correctly.
+    let canvas_width = Math.max(screenWidth, document.documentElement.clientWidth - mainRight.offsetWidth - mainEditor.offsetWidth - 16);
+    let canvas_height = Math.max(screenHeight, document.documentElement.clientHeight - terminalParent.clientHeight - 16);
+    let scaleX = canvas_width / screenWidth;
+    let scaleY = canvas_height / screenHeight;
+    let scale = Math.min(scaleX, scaleY);
+    let offsetX = (canvas_width - (screenWidth * scale)) / 2;
+    let offsetY = (canvas_height - (screenHeight * scale)) / 2;
+    canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale}, ${scale})`;
+}
+
+onresize = () => {
+    resize();
+};
+
 function renderLoop(now) {
     if (currentTime === undefined) {
         currentTime = now;
@@ -337,20 +360,9 @@ function renderLoop(now) {
         }
     }
 
-    // Position the VGA output correctly.
-    let canvas_width = document.documentElement.clientWidth - mainRight.offsetWidth - mainEditor.offsetWidth - 16;
-    let canvas_height = Math.max(200, document.documentElement.clientHeight - terminalParent.clientHeight - 16);
-    let scaleX = canvas_width / screenWidth;
-    let scaleY = canvas_height / screenHeight;
-    let scale = Math.min(scaleX, scaleY);
-    let offsetX = (canvas_width - (screenWidth * scale)) / 2;
-    let offsetY = (canvas_height - (screenHeight * scale)) / 2;
-    canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale}, ${scale})`;
-
-    document.getElementById("code_editor").style.height = (document.documentElement.clientHeight - assemblerOutput.clientHeight - 16) + "px";
-
     currentTime = now;
     requestAnimationFrame(renderLoop);
 };
 
+resize();
 requestAnimationFrame(renderLoop);
