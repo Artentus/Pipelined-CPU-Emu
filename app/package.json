@@ -1,6 +1,6 @@
 {
   "name": "jam1emu-app",
-  "version": "0.4.0",
+  "version": "0.5.1",
   "description": "Emulator for jam-1 by James Sharman",
   "author": "Mathis Rech",
   "license": "MIT",
@@ -17,8 +17,9 @@
     "rimraf": "^3.0.0"
   },
   "dependencies": {
-    "@artentus/jam1emu": "^0.4.0",
+    "@artentus/jam1emu": "^0.5.1",
     "clusterize.js": "^1.0.0",
-    "xterm": "^5.1.0"
+    "xterm": "^5.1.0",
+    "ace-builds": "^1.16.0"
   }
 }

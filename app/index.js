@@ -1,5 +1,132 @@
 import Clusterize from "clusterize.js";
 import * as jam1emu from "@artentus/jam1emu";
+import { Terminal } from 'xterm';
+import * as ace from 'ace-builds/src-noconflict/ace'
+
+require("ace-builds/src-noconflict/theme-monokai");
+
+ace.define(
+    "ace/mode/jam1asm_highlight_rules",
+    ["require", "exports", "module", "ace/lib/oop", "ace/mode/text_highlight_rules"],
+    function(require, exports, module) {
+        "use strict";
+
+        var oop = require("../lib/oop");
+        var TextHighlightRules = require("./text_highlight_rules").TextHighlightRules;
+
+        var Jam1AsmHighlightRules = function() {
+            this.$rules = {
+                start: [
+                    {
+                        token: 'keyword.directive.jam1asm',
+                        regex: '\\.[a-zA-Z_][a-zA-Z0-9_]*',
+                    },
+                    {
+                        token: 'keyword.instruction.jam1asm',
+                        regex: '\\b((nop)|(mov)|(inc)|(incc)|(dec)|(in)|(out)|(break)|(lodsb)|(stosb)|(call)|(ret)|(callbd)|(retbd)|(jmp)|(jo)|(jno)|(js)|(jns)|(jz)|(jnz)|(je)|(jne)|(jc)|(jnc)|(jnae)|(jb)|(jae)|(jnb)|(jbe)|(jna)|(ja)|(jnbe)|(jl)|(jnge)|(jge)|(jnl)|(jle)|(jng)|(jg)|(jnle)|(jlc)|(jnlc)|(push)|(pop)|(clc)|(shl)|(shr)|(add)|(addc)|(addac)|(sub)|(subb)|(subae)|(and)|(or)|(xor)|(not)|(cmp)|(test))\\b',
+                        caseInsensitive: true
+                    },
+                    {
+                        token: 'constant.numeric.jam1asm',
+                        regex: '\\b([0-9][a-zA-Z0-9_]*)\\b',
+                    },
+                    {
+                        token: 'string.quoted.double.jam1asm',
+                        regex: '"',
+                        push: [
+                            {
+                                token: 'constant.language.escape.jam1asm',
+                                regex: '\\\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)',
+                            },
+                            {
+                                token: 'string.quoted.double.jam1asm',
+                                regex: '"',
+                                next: 'pop'
+                            },
+                            {
+                                token: 'string.quoted.double.jam1asm',
+                                regex: '$',
+                                next: 'pop'
+                            },
+                            {
+                                token: 'string.quoted.double.jam1asm',
+                                regex: '.',
+                            },
+                        ]
+                    },
+                    {
+                        token: 'comment.line.jam1asm',
+                        regex: '//|\\;',
+                        push: [
+                            {
+                                token: 'comment.line.jam1asm',
+                                regex: '$',
+                                next: 'pop'
+                            },
+                            {
+                                token: 'comment.line.jam1asm',
+                                regex: '.',
+                            },
+                        ]
+                    },
+                ]
+            };
+            this.normalizeRules();
+        };
+
+        Jam1AsmHighlightRules.metaData = {
+            fileTypes: ['asm', 'inc'],
+            name: 'jam1asm',
+            scopeName: 'source.jam1asm'
+        };
+
+        oop.inherits(Jam1AsmHighlightRules, TextHighlightRules);
+        exports.Jam1AsmHighlightRules = Jam1AsmHighlightRules;
+    }
+);
+
+ace.define(
+    "ace/mode/jam1asm",
+    ["require", "exports", "module", "ace/lib/oop", "ace/mode/text", "ace/mode/jam1asm_highlight_rules"],
+    function(require, exports, module) {
+        "use strict";
+
+        var oop = require("../lib/oop");
+        var TextMode = require("./text").Mode;
+        var Jam1AsmHighlightRules = require("./jam1asm_highlight_rules").Jam1AsmHighlightRules;
+
+        //var FoldMode = require("./folding/coffee").FoldMode;
+
+        var Mode = function () {
+            this.HighlightRules = Jam1AsmHighlightRules;
+            //this.foldingRules = new FoldMode();
+            this.$behaviour = this.$defaultBehaviour;
+        };
+
+        oop.inherits(Mode, TextMode);
+
+        (function () {
+            this.lineCommentStart = ["//", ";"];
+            this.$id = "ace/mode/jam1asm";
+        }).call(Mode.prototype);
+        exports.Mode = Mode;
+    }
+);                
+
+(function() {
+    ace.require(["ace/mode/jam1asm"], function(m) {
+        if (typeof module == "object" && typeof exports == "object" && module) {
+            module.exports = m;
+        }
+    });
+})();
+
+const codeEditor = ace.edit("code_editor");
+codeEditor.setTheme("ace/theme/monokai");
+codeEditor.session.setMode("ace/mode/jam1asm");
+
+const term = new Terminal({ scrollback: 10000, cols: 60, rows: 20 });
+term.open(document.getElementById('output_terminal_parent'));
 
 const frameRate = 59.94047619047765; // VGA 60Hz
 const millisecondsPerFrame = 1000 / frameRate;
@@ -9,6 +136,8 @@ const screenHeight = 480;
 
 const terminalParent = document.getElementById('terminal_parent');
 const mainRight = document.getElementById('main_right');
+const mainEditor = document.getElementById('main_editor');
+const assemblerOutput = document.getElementById("assembler_output");
 const canvas = document.getElementById('canvas');
 const ctx2d = canvas.getContext('2d');
 const system = jam1emu.System.create();
@@ -21,6 +150,7 @@ const resetButton = document.getElementById("reset_button");
 const regs16BitText = document.getElementById("regs_16_bit_text");
 const regs8BitText = document.getElementById("regs_8_bit_text");
 const flagsText = document.getElementById("flags_text");
+const assembleButton = document.getElementById("assemble_button");
 
 let running = false;
 let currentTime = undefined;
@@ -63,10 +193,11 @@ function update_flags() {
     flagsText.innerText = `${f} ${l} ${c} ${z} ${s} ${o}`;
 }
 
-const memory_clusterize = new Clusterize({
+const memoryClusterize = new Clusterize({
     rows: [],
     scrollId: "memory_scroll_area",
-    contentId: "memory_content_area"
+    contentId: "memory_content_area",
+    rows_in_block: 100,
 });
 
 function update_memory_view() {
@@ -87,7 +218,7 @@ function update_memory_view() {
         lines.push(str);
     }
 
-    memory_clusterize.update(lines);
+    memoryClusterize.update(lines);
 }
 
 function update() {
@@ -105,6 +236,7 @@ function toggle_run() {
     filePicker.disabled = running;
     singleStepButton.disabled = running;
     frameStepButton.disabled = running;
+    assembleButton.disabled = running;
     update();
 }
 
@@ -115,6 +247,7 @@ function pause() {
     filePicker.disabled = false;
     singleStepButton.disabled = false;
     frameStepButton.disabled = false;
+    assembleButton.disabled = false;
     update();
 }
 
@@ -133,7 +266,11 @@ filePicker.onchange = pe => {
             reader.onload = re => {
                 let content = re.target.result;
                 let bytes = new Uint8Array(content);
-                system.load_program(bytes);
+                if (system.load_program(0, bytes)) {
+                    update_memory_view();
+                } else {
+                    // TODO:
+                }
             };
         }
     }
@@ -160,6 +297,15 @@ frameStepButton.onclick = () => {
 resetButton.onclick = () => {
     pause();
     system.reset();
+};
+
+assembleButton.onclick = () => {
+    if (!running) {
+        term.clear();
+        let output = system.assemble(codeEditor.getValue());
+        term.write(output);
+        update_memory_view();
+    }
 };
 
 function renderLoop(now) {
@@ -192,14 +338,16 @@ function renderLoop(now) {
     }
 
     // Position the VGA output correctly.
-    let canvas_width = window.innerWidth - mainRight.offsetWidth - 16;
-    let canvas_height = Math.max(200, window.innerHeight - terminalParent.clientHeight - 16);
+    let canvas_width = document.documentElement.clientWidth - mainRight.offsetWidth - mainEditor.offsetWidth - 16;
+    let canvas_height = Math.max(200, document.documentElement.clientHeight - terminalParent.clientHeight - 16);
     let scaleX = canvas_width / screenWidth;
     let scaleY = canvas_height / screenHeight;
     let scale = Math.min(scaleX, scaleY);
     let offsetX = (canvas_width - (screenWidth * scale)) / 2;
     let offsetY = (canvas_height - (screenHeight * scale)) / 2;
     canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale}, ${scale})`;
+
+    document.getElementById("code_editor").style.height = (document.documentElement.clientHeight - assemblerOutput.clientHeight - 16) + "px";
 
     currentTime = now;
     requestAnimationFrame(renderLoop);

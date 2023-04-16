@@ -12,20 +12,19 @@
         display: block;
         margin: 0px;
         padding: 0px;
-        height: 100vh;
+        height: 100%;
         background-color: #1b1b1b;
         color: #e4e4e4;
         font-family: monospace;
-        font-size: 1.15em;
       }
 
       main {
         display: grid;
         margin: 0px;
         padding: 0px;
-        height: 100vh;
+        height: 100%;
 
-        grid-template-columns: auto max-content;
+        grid-template-columns: auto max-content max-content;
       }
 
       #main_left {
@@ -33,7 +32,7 @@
         flex-direction: column;
         margin: 0px;
         padding: 0px;
-        height: 100vh;
+        height: 100%;
 
         grid-column: 1;
       }
@@ -68,7 +67,7 @@
         flex-direction: column;
         margin: 0px;
         padding: 0px;
-        height: 100vh;
+        height: 100%;
 
         grid-column: 2;
       }
@@ -90,6 +89,7 @@
         box-sizing: border-box;
         margin: 0px;
         padding: 8px;
+        font-size: 1.1em;
 
         grid-template-columns: 1fr 1fr 1fr;
       }
@@ -106,9 +106,26 @@
         padding: 0px;
         height: 1vh;
         overflow-y: scroll;
+        font-size: 1.05em;
 
         flex-grow: 1;
         flex-shrink: 1;
+      }
+
+      #main_editor {
+        display: flex;
+        flex-direction: column;
+        margin: 0px;
+        padding: 0px;
+        height: 100%;
+
+        grid-column: 3;
+      }
+
+      #code_editor {
+        margin: 8px;
+        height: 100px;
+        font-size: 0.8em;
       }
 
       .label {
@@ -147,13 +164,6 @@
             <button style="grid-column: 3;" id="frame_step_button">Frame Step</button>
             <button style="grid-column: 4;" id="reset_button">Reset</button>
           </div>
-          
-          <!--
-          <div>
-            <button>-- Clock Speed</button>
-            <button>++ Clock Speed</button>
-          </div>
-          -->
         </section>
 
         <section id="register_view">
@@ -173,8 +183,10 @@
         </section>
 
         <section id="memory_view">
-          <h3 class="label">Memory</h3>
-          <div style="margin: 0px 8px 4px 8px;">ADDR | 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F</div>
+          <div style="font-size: 1.1em;">
+            <h3 class="label">Memory</h3>
+          </div>
+          <div style="margin: 0px 8px 4px 8px; font-size: 1.05em;">ADDR | 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F</div>
           <hr style="width: 100%;">
         </section>
 
@@ -182,9 +194,20 @@
           <div id="memory_content_area" class="clusterize-content"></div>
         </div>
       </div>
+
+      <div id="main_editor">
+        <section>
+          <div id="code_editor"></div>
+        </section>
+
+        <section id="assembler_output">
+          <button style="margin: 0px 8px;" id="assemble_button">Assemble</button>
+          <div style="margin: 8px;" id="output_terminal_parent"></div>
+        </section>
+      </div>
     </main>
 
     <noscript>This page contains webassembly and javascript content, please enable javascript in your browser.</noscript>
-    <script src="./bootstrap.js"></script>
+    <script src="./bootstrap.js" type="text/javascript" charset="utf-8"></script>
   </body>
 </html>

@@ -19,5 +19,16 @@ module.exports = {
             "node_modules/xterm/css/xterm.css",
             "node_modules/clusterize.js/clusterize.css"
         ]),
-    ]
+    ],
+    resolveLoader: {
+        modules: [
+            "node_modules", 
+            __dirname + "/node_modules",
+        ],
+    },
+    devServer: {
+        contentBase: __dirname,
+        compress: true,
+        port: 9000,
+    },
 };
