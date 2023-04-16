@@ -51,7 +51,7 @@ contexts:
   main:
     - match: \.[a-zA-Z_][a-zA-Z0-9_]*
       scope: keyword.directive.jam1asm
-    - match: \b((nop)|(mov)|(inc)|(incc)|(dec)|(in)|(out)|(break)|(lodsb)|(stosb)|(call)|(ret)|(callbd)|(retbd)|(jmp)|(jo)|(jno)|(js)|(jns)|(jz)|(jnz)|(je)|(jne)|(jc)|(jnc)|(jnae)|(jb)|(jae)|(jnb)|(jbe)|(jna)|(ja)|(jnbe)|(jl)|(jnge)|(jge)|(jnl)|(jle)|(jng)|(jg)|(jnle)|(jlc)|(jnlc)|(push)|(pop)|(clc)|(shl)|(shr)|(add)|(addc)|(addac)|(sub)|(subb)|(subae)|(and)|(or)|(xor)|(not)|(cmp)|(test))\b
+    - match: (?i)\b((nop)|(mov)|(inc)|(incc)|(dec)|(in)|(out)|(break)|(lodsb)|(stosb)|(call)|(ret)|(callbd)|(retbd)|(jmp)|(jo)|(jno)|(js)|(jns)|(jz)|(jnz)|(je)|(jne)|(jc)|(jnc)|(jnae)|(jb)|(jae)|(jnb)|(jbe)|(jna)|(ja)|(jnbe)|(jl)|(jnge)|(jge)|(jnl)|(jle)|(jng)|(jg)|(jnle)|(jlc)|(jnlc)|(push)|(pop)|(clc)|(shl)|(shr)|(add)|(addc)|(addac)|(sub)|(subb)|(subae)|(and)|(or)|(xor)|(not)|(cmp)|(test))\b
       scope: keyword.instruction.jam1asm
     - match: \b([0-9][a-zA-Z0-9_]*)\b
       scope: constant.numeric.jam1asm
@@ -61,8 +61,6 @@ contexts:
       push: line_comment
     - match: \;
       push: line_comment
-    - match: /\*
-      push: block_comment
 
   string:
     - meta_scope: string.quoted.double.jam1asm
@@ -76,11 +74,6 @@ contexts:
   line_comment:
     - meta_scope: comment.line.jam1asm
     - match: $
-      pop: true
-
-  block_comment:
-    - meta_scope: comment.block.jam1asm
-    - match: \*/
       pop: true
 "#;
 

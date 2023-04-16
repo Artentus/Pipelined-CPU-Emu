@@ -429,7 +429,6 @@ pub enum Jam1Token {
     Identifier(SharedStr),
     IntegerLiteral(i64),
     StringLiteral(SharedStr),
-    InvalidBlockComment,
     InvalidDirective(SharedStr),
     InvalidIntegerLiteral(ParseIntError),
     InvalidStringLiteral(Box<[ParseStringError]>),
@@ -449,18 +448,6 @@ fn read_comment_token(text: &str) -> Option<ReadTokenResult<Jam1Token>> {
             token: Jam1Token::Comment,
             consumed_bytes: end + ";".len(),
         })
-    } else if let Some(text) = text.strip_prefix("/*") {
-        if let Some(end) = text.find("*/") {
-            Some(ReadTokenResult {
-                token: Jam1Token::Comment,
-                consumed_bytes: end + "/**/".len(),
-            })
-        } else {
-            Some(ReadTokenResult {
-                token: Jam1Token::InvalidBlockComment,
-                consumed_bytes: text.len() + "/*".len(),
-            })
-        }
     } else {
         None
     }

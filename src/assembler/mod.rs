@@ -17,9 +17,6 @@ type SharedStr = Rc<str>;
 
 #[derive(Debug)]
 pub enum AssemblerError {
-    UnclosedBlockComment {
-        comment: TextSpan,
-    },
     InvalidDirective {
         directive: TextSpan,
     },
@@ -160,14 +157,6 @@ impl AssemblerError {
         let mut output = String::new();
 
         match self {
-            &Self::UnclosedBlockComment { comment } => {
-                write!(
-                    output,
-                    "{BOLD}{RED}Error{WHITE}: block comment is not closed{REGULAR}\r\n"
-                )
-                .unwrap();
-                format_code_hint(&mut output, file_server, comment, RED, None);
-            }
             &Self::InvalidDirective { directive } => {
                 write!(
                     output,
@@ -457,11 +446,6 @@ fn process_file(
 
                     tokens.clear();
                 }
-            }
-            Jam1Token::InvalidBlockComment => {
-                errors.push(AssemblerError::UnclosedBlockComment {
-                    comment: token.span,
-                });
             }
             Jam1Token::Comment => {}
             _ => {
