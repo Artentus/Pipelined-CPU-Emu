@@ -43,7 +43,7 @@ macro_rules! expect {
 
 trait Jam1Parser<T> = langbox::Parser<Jam1Token, T, ParseError>;
 
-fn punctuation<const N: usize>(list: [PunctuationKind; N]) -> impl Jam1Parser<Punctuation> {
+fn punctuation(list: &'static [PunctuationKind]) -> impl Jam1Parser<Punctuation> {
     parse_fn!(|input| {
         if let Some(token) = input.peek() {
             if let &Jam1Token::Punctuation(kind) = &token.kind {
@@ -191,9 +191,9 @@ fn string_literal() -> impl Jam1Parser<StringLiteral> {
 
 fn group_expression() -> impl Jam1Parser<GroupExpression> {
     let seq = sequence!(
-        punctuation([PunctuationKind::OpeningParenthesis]),
+        punctuation(&[PunctuationKind::OpeningParenthesis]),
         parser!({expression()}!![expect!("expression")]),
-        parser!({punctuation([PunctuationKind::ClosingParenthesis])}!![expect!("expression or `)`")]),
+        parser!({punctuation(&[PunctuationKind::ClosingParenthesis])}!![expect!("expression or `)`")]),
     );
 
     parser!(seq->[|(open_paren, inner, close_paren)| GroupExpression::new(open_paren, inner, close_paren)])
@@ -224,7 +224,7 @@ fn build_unary_expression_tree((ops, mut expr): (Vec<Punctuation>, Expression)) 
 }
 
 fn unary_expression() -> impl Jam1Parser<Expression> {
-    let op = punctuation([
+    let op = punctuation(&[
         PunctuationKind::PlusSign,
         PunctuationKind::MinusSign,
         PunctuationKind::ExclamationMark,
@@ -267,7 +267,7 @@ fn build_binary_expression_tree(
 
 macro_rules! binary_expression {
     ($term:expr, [$($punct:ident),+ $(,)?] $(,)?) => {{
-        let op = punctuation([$(PunctuationKind::$punct),+]);
+        let op = punctuation(&[$(PunctuationKind::$punct),+]);
         let tail = parser!(op <.> {$term}!![expect!("expression")]);
         parser!(({$term} <.> *tail)->[build_binary_expression_tree])
     }};
@@ -293,9 +293,9 @@ fn expression() -> impl Jam1Parser<Expression> {
 
 fn label() -> impl Jam1Parser<Label> {
     let label_value = choice!(
-        parser!({punctuation([PunctuationKind::Colon])}->[|colon| LabelValue::Address { colon }]),
+        parser!({punctuation(&[PunctuationKind::Colon])}->[|colon| LabelValue::Address { colon }]),
         parser!(
-            ({punctuation([PunctuationKind::EqualSign])} <.> {expression()}!![expect!("expression")])
+            ({punctuation(&[PunctuationKind::EqualSign])} <.> {expression()}!![expect!("expression")])
             ->[|(assign_op, value)| LabelValue::Expression { assign_op, value }]
         ),
     );
@@ -348,9 +348,9 @@ fn mov_instruction() -> impl Jam1Parser<MovInstruction> {
     let dst = parser!(
         {register()}->[MovDestination::Register]
         <|> (
-                {punctuation([PunctuationKind::OpeningBracket])}
+                {punctuation(&[PunctuationKind::OpeningBracket])}
                 <.> {register()}!![expect!("register")]
-                <.> {punctuation([PunctuationKind::ClosingBracket])}!![expect!("`]`")]
+                <.> {punctuation(&[PunctuationKind::ClosingBracket])}!![expect!("`]`")]
             )->[|((open_bracket, address_source), close_bracket)|
                     MovDestination::Memory { open_bracket, address_source, close_bracket }]
     );
@@ -359,9 +359,9 @@ fn mov_instruction() -> impl Jam1Parser<MovInstruction> {
         {expression()}->[MovSource::Value]
         <|> {register()}->[MovSource::Register]
         <|> (
-                {punctuation([PunctuationKind::OpeningBracket])}
+                {punctuation(&[PunctuationKind::OpeningBracket])}
                 <.> {register()}!![expect!("register")]
-                <.> {punctuation([PunctuationKind::ClosingBracket])}!![expect!("`]`")]
+                <.> {punctuation(&[PunctuationKind::ClosingBracket])}!![expect!("`]`")]
             )->[|((open_bracket, address_source), close_bracket)|
                     MovSource::Memory { open_bracket, address_source, close_bracket }]
     );
@@ -369,7 +369,7 @@ fn mov_instruction() -> impl Jam1Parser<MovInstruction> {
     let raw = sequence!(
         mnemonic([MnemonicKind::Mov]),
         parser!(dst!![expect!("register or memory location")]),
-        parser!({punctuation([PunctuationKind::Comma])}!![expect!("`,`")]),
+        parser!({punctuation(&[PunctuationKind::Comma])}!![expect!("`,`")]),
         parser!(src!![expect!("expression, register or memory location")]),
     );
 
@@ -453,7 +453,7 @@ macro_rules! def_dual_reg_inst {
             let raw = sequence!(
                 mnemonic([MnemonicKind::$mnemonic]),
                 parser!({register()}!![expect!("register")]),
-                parser!({punctuation([PunctuationKind::Comma])}!![expect!("`,`")]),
+                parser!({punctuation(&[PunctuationKind::Comma])}!![expect!("`,`")]),
                 parser!({register()}!![expect!("register")]),
             );
 
@@ -551,7 +551,7 @@ fn in_instruction() -> impl Jam1Parser<InInstruction> {
     let raw = sequence!(
         mnemonic([MnemonicKind::In]),
         parser!({register()}!![expect!("register")]),
-        parser!({punctuation([PunctuationKind::Comma])}!![expect!("`,`")]),
+        parser!({punctuation(&[PunctuationKind::Comma])}!![expect!("`,`")]),
         parser!({io_register()}!![expect!("IO register")]),
     );
 
@@ -588,7 +588,7 @@ fn out_instruction() -> impl Jam1Parser<OutInstruction> {
     let raw = sequence!(
         mnemonic([MnemonicKind::In]),
         parser!({io_register()}!![expect!("IO register")]),
-        parser!({punctuation([PunctuationKind::Comma])}!![expect!("`,`")]),
+        parser!({punctuation(&[PunctuationKind::Comma])}!![expect!("`,`")]),
         parser!({register()}!![expect!("register")]),
     );
 
