@@ -154,6 +154,7 @@ mod pipeline_data {
 use pipeline_data::*;
 
 bitflags! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Flags : u8 {
         const OVERFLOW = 1<<0;
         const SIGN = 1<<1;

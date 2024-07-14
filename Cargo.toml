@@ -1,6 +1,6 @@
 [package]
 name = "jam1emu"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 
 [[bin]]
@@ -18,28 +18,29 @@ debug-assertions = false
 overflow-checks = false
 
 [dependencies]
-cpal = { version = "0.14", features = ["wasm-bindgen"] }
-rodio = { version = "0.16", default-features = false }
+cpal = { version = "0.15", features = ["wasm-bindgen"] }
+rodio = { version = "0.19", default-features = false }
 gilrs = "0.10"
 crossbeam = "0.8"
 modular-bitfield = "0.11"
-bitflags = "1.3"
-clap = { version = "3.2", features = ["derive"] }
-vte = "0.11"
+bitflags = "2.6"
+clap = { version = "4.5", features = ["derive"] }
+vte = "0.13"
 langbox = "0.3"
 cow-utils = "0.1"
-indexmap = "1.9"
+indexmap = "2.2"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-winit = "0.27"
-wgpu = { version = "0.14", features = ["webgl"] }
-egui-winit = "0.20"
-egui-wgpu = { version = "0.20", features = ["winit"] }
-egui = "0.20"
-crossterm = "0.26"
-spin_sleep = "1.1"
-rfd = "0.10"
-syntect = { version = "5.0", default-features = false, features = ["default-fancy"] }
+winit = "0.29"
+wgpu = { version = "0.20", features = ["webgl"] }
+egui-winit = "0.28"
+egui-wgpu = { version = "0.28", features = ["winit"] }
+egui = "0.28"
+crossterm = "0.27"
+spin_sleep_util = "0.1"
+rfd = "0.14"
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+pollster = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen = "0.2"

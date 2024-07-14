@@ -1,17 +1,5 @@
 use egui::text::LayoutJob;
 
-pub fn highlight(ctx: &egui::Context, code: &str) -> LayoutJob {
-    impl egui::util::cache::ComputerMut<&str, LayoutJob> for Highlighter {
-        fn compute(&mut self, code: &str) -> LayoutJob {
-            self.highlight(code)
-        }
-    }
-
-    type HighlightCache = egui::util::cache::FrameCache<LayoutJob, Highlighter>;
-
-    ctx.memory().caches.cache::<HighlightCache>().get(code)
-}
-
 #[allow(dead_code)]
 #[derive(Clone, Copy, Hash, PartialEq)]
 enum SyntectTheme {
@@ -77,7 +65,7 @@ contexts:
       pop: true
 "#;
 
-struct Highlighter {
+pub struct Highlighter {
     ps: syntect::parsing::SyntaxSet,
     ts: syntect::highlighting::ThemeSet,
 }
@@ -95,7 +83,7 @@ impl Default for Highlighter {
 }
 
 impl Highlighter {
-    fn highlight(&self, code: &str) -> LayoutJob {
+    pub fn highlight(&self, code: &str) -> LayoutJob {
         self.highlight_impl(code).unwrap_or_else(|| {
             // Fallback:
             LayoutJob::simple(
