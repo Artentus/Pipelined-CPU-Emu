@@ -855,6 +855,10 @@ impl Spi {
     }
 
     fn update_data(&mut self) {
+        if self.device == SpiDevice::None {
+            return;
+        }
+
         self.cycles += 1;
         if self.cycles >= 8 {
             self.cycles = 0;
@@ -904,7 +908,7 @@ impl Spi {
 
         if self.device != prev_device {
             match self.device {
-                SpiDevice::None => (),
+                SpiDevice::None => self.cycles = 0,
                 SpiDevice::Rtc => self.rtc.select(),
                 SpiDevice::Mcp => self.mcp.select(),
                 SpiDevice::Sd => self.sd.select(),
