@@ -10,7 +10,7 @@ pub mod cpu;
 mod device;
 
 use cpu::Cpu;
-use device::{Audio, Controler, ControlerButton, Gpio, Memory, Uart, Vga};
+use device::{Audio, Controler, ControlerButton, Memory, Spi, Uart, Vga};
 
 use crossbeam::queue::SegQueue;
 use std::collections::VecDeque;
@@ -126,11 +126,11 @@ struct AudioState {
 pub struct System<Term: Terminal> {
     cpu: Cpu,
     memory: Memory,
-    gpio: Gpio,
     uart: Uart,
     audio: Audio,
     vga: Vga,
     controler: Controler,
+    spi: Spi,
 
     clock_rate: f64,
     cycles_per_frame: f64,
@@ -160,11 +160,11 @@ impl<Term: Terminal> System<Term> {
         let mut system = Self {
             cpu: Cpu::new(),
             memory: Memory::new(),
-            gpio: Gpio::new(),
             uart: Uart::new(),
             audio: Audio::new(),
             vga: Vga::new(),
             controler: Controler::new(),
+            spi: Spi::new(),
 
             clock_rate: INITIAL_CLOCK_RATE,
             cycles_per_frame: 0.0,
@@ -209,6 +209,7 @@ impl<Term: Terminal> System<Term> {
 
         self.cpu.reset(CPU_RESET_PC);
         self.vga.reset();
+        self.spi.reset();
 
         self.clock_rate = INITIAL_CLOCK_RATE;
         self.recalculate_cycles();
@@ -309,11 +310,11 @@ impl<Term: Terminal> System<Term> {
             self.cpu
                 .clock(
                     &mut self.memory,
-                    &mut self.gpio,
                     &mut self.uart,
                     &mut self.audio,
                     &mut self.vga,
                     &mut self.controler,
+                    &mut self.spi,
                 )
                 .expect("invalid instruction");
 
@@ -380,11 +381,11 @@ impl<Term: Terminal> System<Term> {
                 .cpu
                 .clock(
                     &mut self.memory,
-                    &mut self.gpio,
                     &mut self.uart,
                     &mut self.audio,
                     &mut self.vga,
                     &mut self.controler,
+                    &mut self.spi,
                 )
                 .expect("invalid instruction");
 
@@ -420,6 +421,8 @@ impl<Term: Terminal> System<Term> {
             self.vga_cycles -= whole_vga_cycles as f64;
             self.vga.clock(&mut self.memory, whole_vga_cycles);
             self.memory.reset_vga_conflict();
+
+            self.spi.clock();
 
             if break_point {
                 break;

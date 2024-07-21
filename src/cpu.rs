@@ -3,7 +3,7 @@ use modular_bitfield::error::InvalidBitPattern;
 use modular_bitfield::*;
 use std::fmt::Display;
 
-use crate::{Audio, Controler, Gpio, Memory, Uart, Vga};
+use crate::{Audio, Controler, Memory, Spi, Uart, Vga};
 
 const PIPE_ROM_SIZE: usize = 0x8000;
 type PipeRom = &'static [u8; PIPE_ROM_SIZE];
@@ -72,7 +72,7 @@ enum MainBusAssertDevice {
     IoVga = 10,
     IoUartData = 11,
     IoUartCtrl = 12,
-    IoGpio = 14,
+    IoSpiData = 14,
     MemBridge = 15,
 }
 
@@ -88,10 +88,9 @@ enum MainBusLoadDevice {
     Tl = 6,
     Th = 7,
     IoAudioData = 9,
-    IoVga = 10,
     IoUartData = 11,
-    IoUartCtrl = 12,
-    IoGpio = 14,
+    IoSpiCtrl = 12,
+    IoSpiData = 14,
     MemBridge = 15,
 }
 
@@ -484,11 +483,11 @@ impl Cpu {
     pub fn clock(
         &mut self,
         memory: &mut Memory,
-        gpio: &mut Gpio,
         uart: &mut Uart,
         audio: &mut Audio,
         vga: &mut Vga,
         controler: &mut Controler,
+        spi: &mut Spi,
     ) -> Result<bool, InvalidBitPattern<u8>> {
         // Move instruction stream forward
         self.stage2_instruction = self.stage1_instruction;
@@ -552,7 +551,7 @@ impl Cpu {
             MainBusAssertDevice::IoVga => vga.read_data(),
             MainBusAssertDevice::IoUartData => uart.read_data(),
             MainBusAssertDevice::IoUartCtrl => uart.read_ctrl(),
-            MainBusAssertDevice::IoGpio => gpio.read(),
+            MainBusAssertDevice::IoSpiData => spi.read_data(),
             MainBusAssertDevice::MemBridge => mem_data,
         };
 
@@ -566,10 +565,9 @@ impl Cpu {
             MainBusLoadDevice::Tl => self.set_tl(main_bus),
             MainBusLoadDevice::Th => self.set_th(main_bus),
             MainBusLoadDevice::IoAudioData => audio.write_data(main_bus),
-            MainBusLoadDevice::IoVga => {}
             MainBusLoadDevice::IoUartData => uart.write_data(main_bus),
-            MainBusLoadDevice::IoUartCtrl => {}
-            MainBusLoadDevice::IoGpio => gpio.write(main_bus),
+            MainBusLoadDevice::IoSpiCtrl => spi.write_ctrl(main_bus),
+            MainBusLoadDevice::IoSpiData => spi.write_data(main_bus),
             MainBusLoadDevice::MemBridge => memory.write(vga, address, main_bus),
         }
 

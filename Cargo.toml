@@ -29,6 +29,7 @@ vte = "0.13"
 langbox = "0.3"
 cow-utils = "0.1"
 indexmap = "2.2"
+chrono = "0.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 winit = "0.29"

@@ -1,4 +1,5 @@
 use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use chrono::{DateTime, Datelike, Local, Timelike};
 
 pub struct Memory {
     data: Box<[u8]>,
@@ -150,21 +151,6 @@ impl Memory {
     }
 }
 
-pub struct Gpio {}
-
-impl Gpio {
-    #[inline]
-    pub const fn new() -> Self {
-        Self {}
-    }
-
-    pub fn write(&mut self, _value: u8) {}
-
-    pub fn read(&mut self) -> u8 {
-        0
-    }
-}
-
 struct Queue<T, const N: usize> {
     items: [Option<T>; N],
     start: usize,
@@ -304,6 +290,7 @@ impl SquareWaveChannel {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AudioWriteCycleState {
     ChannelSelect,
     LowData,
@@ -615,6 +602,7 @@ impl Vga {
 }
 
 // Follows the SNES layout
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlerButton {
     A,
     B,
@@ -688,5 +676,266 @@ impl Controler {
 
         self.state = !self.state;
         result
+    }
+}
+
+trait Bcd: Sized {
+    fn to_bcd(self) -> Self;
+}
+
+impl Bcd for u8 {
+    fn to_bcd(self) -> Self {
+        assert!(self < 100);
+        let ones = self % 10;
+        let tens = self / 10;
+        (tens * 16) + ones
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RtcState {
+    ReadAddress,
+    ReadData,
+    WriteData,
+}
+
+struct Rtc {
+    time: DateTime<Local>,
+    state: RtcState,
+    addr: u8,
+}
+
+impl Rtc {
+    fn new() -> Self {
+        Self {
+            time: Local::now(),
+            state: RtcState::ReadAddress,
+            addr: 0,
+        }
+    }
+
+    #[inline]
+    fn select(&mut self) {
+        self.time = Local::now();
+        self.state = RtcState::ReadAddress;
+    }
+
+    fn clock(&mut self, data_in: u8) -> u8 {
+        const REG_HUNDREDTHS: u8 = 0x0;
+        const REG_SECONDS: u8 = 0x1;
+        const REG_MINUTES: u8 = 0x2;
+        const REG_HOURS: u8 = 0x3;
+        const REG_DAY_OF_WEEK: u8 = 0x4;
+        const REG_DAY_OF_MONTH: u8 = 0x5;
+        const REG_MONTH: u8 = 0x6;
+        const REG_YEAR: u8 = 0x7;
+
+        match self.state {
+            RtcState::ReadAddress => {
+                self.addr = data_in & 0xF;
+                self.state = if (data_in & 0x80) > 0 {
+                    RtcState::WriteData
+                } else {
+                    RtcState::ReadData
+                };
+
+                0
+            }
+            RtcState::ReadData => {
+                let data_out = match self.addr {
+                    REG_HUNDREDTHS => {
+                        (self.time.nanosecond() / 10_000_000).min(99 /* leap second */)
+                    }
+                    REG_SECONDS => self.time.second(),
+                    REG_MINUTES => self.time.minute(),
+                    REG_HOURS => self.time.hour(),
+                    REG_DAY_OF_WEEK => (self.time.weekday() as u32) + 1,
+                    REG_DAY_OF_MONTH => self.time.day(),
+                    REG_MONTH => self.time.month(),
+                    REG_YEAR => (self.time.year().abs() as u32) % 100,
+                    0..=0xF => 0,
+                    _ => unreachable!(),
+                };
+
+                self.addr = (self.addr + 1) & 0xF;
+
+                (data_out as u8).to_bcd()
+            }
+            RtcState::WriteData => {
+                self.addr = (self.addr + 1) & 0xF;
+
+                0
+            }
+        }
+    }
+}
+
+struct Mcp {}
+
+impl Mcp {
+    fn new() -> Self {
+        Self {}
+    }
+
+    #[inline]
+    fn select(&mut self) {}
+
+    fn clock(&mut self, data_in: u8) -> u8 {
+        0
+    }
+}
+
+struct Sd {}
+
+impl Sd {
+    fn new() -> Self {
+        Self {}
+    }
+
+    #[inline]
+    fn select(&mut self) {}
+
+    fn clock(&mut self, data_in: u8) -> u8 {
+        0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpiClockMode {
+    Low,
+    High,
+    Auto,
+    AutoInv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpiDevice {
+    None,
+    Rtc,
+    Mcp,
+    Sd,
+}
+
+pub struct Spi {
+    rtc: Rtc,
+    mcp: Mcp,
+    sd: Sd,
+
+    clock_mode: SpiClockMode,
+    clock_inv: bool,
+    device: SpiDevice,
+    cycles: u8,
+    data_out: u8,
+    data_in: u8,
+}
+
+impl Spi {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            rtc: Rtc::new(),
+            mcp: Mcp::new(),
+            sd: Sd::new(),
+
+            clock_mode: SpiClockMode::Low,
+            clock_inv: false,
+            device: SpiDevice::None,
+            cycles: 0,
+            data_out: 0,
+            data_in: 0,
+        }
+    }
+
+    #[inline]
+    pub fn reset(&mut self) {
+        self.clock_mode = SpiClockMode::Low;
+        self.clock_inv = false;
+        self.device = SpiDevice::None;
+        self.cycles = 0;
+    }
+
+    fn update_data(&mut self) {
+        self.cycles += 1;
+        if self.cycles >= 8 {
+            self.cycles = 0;
+
+            match self.device {
+                SpiDevice::None => (),
+                SpiDevice::Rtc => self.data_in = self.rtc.clock(self.data_out),
+                SpiDevice::Mcp => self.data_in = self.mcp.clock(self.data_out),
+                SpiDevice::Sd => self.data_in = self.sd.clock(self.data_out),
+            }
+        }
+    }
+
+    pub fn write_ctrl(&mut self, value: u8) {
+        let prev_clock = match self.clock_mode {
+            SpiClockMode::Low => self.clock_inv,
+            SpiClockMode::High => !self.clock_inv,
+            SpiClockMode::Auto | SpiClockMode::AutoInv => false,
+        };
+
+        const CLOCK_MODE_LOW: u8 = 0;
+        const CLOCK_MODE_HIGH: u8 = 1;
+        const CLOCK_MODE_AUTO: u8 = 2;
+        const CLOCK_MODE_AUTO_INV: u8 = 3;
+
+        self.clock_mode = match (value >> 0) & 0x3 {
+            CLOCK_MODE_LOW => SpiClockMode::Low,
+            CLOCK_MODE_HIGH => SpiClockMode::High,
+            CLOCK_MODE_AUTO => SpiClockMode::Auto,
+            CLOCK_MODE_AUTO_INV => SpiClockMode::AutoInv,
+            _ => unreachable!(),
+        };
+
+        self.clock_inv = ((value >> 2) & 0x1) > 0;
+
+        const DEVICE_RTC: u8 = 8;
+        const DEVICE_MCP: u8 = 9;
+        const DEVICE_SD: u8 = 10;
+
+        let prev_device = self.device;
+        self.device = match (value >> 3) & 0xF {
+            DEVICE_RTC => SpiDevice::Rtc,
+            DEVICE_MCP => SpiDevice::Mcp,
+            DEVICE_SD => SpiDevice::Sd,
+            _ => SpiDevice::None,
+        };
+
+        if self.device != prev_device {
+            match self.device {
+                SpiDevice::None => (),
+                SpiDevice::Rtc => self.rtc.select(),
+                SpiDevice::Mcp => self.mcp.select(),
+                SpiDevice::Sd => self.sd.select(),
+            }
+        }
+
+        let next_clock = match self.clock_mode {
+            SpiClockMode::Low => self.clock_inv,
+            SpiClockMode::High => !self.clock_inv,
+            SpiClockMode::Auto | SpiClockMode::AutoInv => false,
+        };
+
+        if !prev_clock && next_clock {
+            self.update_data();
+        }
+    }
+
+    #[inline]
+    pub fn write_data(&mut self, value: u8) {
+        self.data_out = value;
+    }
+
+    #[inline]
+    pub fn read_data(&mut self) -> u8 {
+        self.data_in
+    }
+
+    #[inline]
+    pub fn clock(&mut self) {
+        if self.clock_mode == SpiClockMode::Auto {
+            self.update_data();
+        }
     }
 }
